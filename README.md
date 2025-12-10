@@ -1,2 +1,2 @@
 # textual
-A opioned micro framework to deal with streamable discreet textual transformations.
+Textual is an opinionated micro-framework designed for handling streamable, discrete textual transformations.
