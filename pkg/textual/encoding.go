@@ -346,18 +346,37 @@ func GetEncoding(e EncodingID) (encoding.Encoding, error) {
 	return nil, errors.New("unsupported encoding id")
 }
 
-// ToUTF8 converts bytes (in any encoding) to UTF-8.
+// NewUTF8Reader wraps r in a streaming decoder that converts from the
+// specified source encoding into UTF‑8 on the fly.
+//
+// The returned reader can be plugged directly into components such as
+// bufio.Scanner or IOReaderProcessor, avoiding the need to load the whole
+// content into memory first.
+//
+// Callers remain responsible for closing r if it also implements io.Closer.
+func NewUTF8Reader(r io.Reader, src EncodingID) (io.Reader, error) {
+	enc, err := GetEncoding(src)
+	if err != nil {
+		return nil, err
+	}
+	return transform.NewReader(r, enc.NewDecoder()), nil
+}
+
+// ToUTF8 converts bytes (in any encoding) to UTF‑8.
+//
+// This is a convenience wrapper around ReaderToUTF8 for in‑memory data.
 func ToUTF8(input []byte, src EncodingID) (UTF8String, error) {
 	r := bytes.NewReader(input)
 	return ReaderToUTF8(r, src)
 }
 
+// ReaderToUTF8 reads all data from r, decodes it from the specified source
+// encoding, and returns it as a UTF‑8 string.
 func ReaderToUTF8(r io.Reader, src EncodingID) (UTF8String, error) {
-	enc, err := GetEncoding(src)
+	reader, err := NewUTF8Reader(r, src)
 	if err != nil {
 		return "", err
 	}
-	reader := transform.NewReader(r, enc.NewDecoder())
 	out, err := io.ReadAll(reader)
 	if err != nil {
 		return "", err
