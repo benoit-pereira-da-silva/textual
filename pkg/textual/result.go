@@ -185,7 +185,6 @@ func (r Result) Render() UTF8String {
 	}
 	rawTexts := r.RawTexts()
 	segments := make([]segment, 0, len(r.Fragments)+len(rawTexts))
-
 	lastFrag := Fragment{
 		Pos: -1,
 	}
