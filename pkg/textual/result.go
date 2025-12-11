@@ -24,7 +24,7 @@ type Fragment struct {
 	Pos         int        `json:"pos"`         // The first char position in the original text.
 	Len         int        `json:"len"`         // The len of the expression in the original text
 	Confidence  float64    `json:"confidence"`  // The confidence of the result.
-	Variant     int        `json:"variant"`     // A variant number, when the dictionary offers multiple candidates.
+	Variant     int        `json:"variant"`     // A variant number when offering multiple candidates.
 }
 
 // RawTexts is a slice of RawTexts
