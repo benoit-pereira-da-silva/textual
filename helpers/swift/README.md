@@ -2,7 +2,7 @@
 
 Lightweight Swift utilities to work with `textual` `Result` objects in iOS / macOS clients.
 
-This is a client-side port which is associated with parts of the Go package:
+This module is the client-side Swift counterpart of the Go `textual`:
 
 - `Result.rawTexts()` – compute the raw segments of a text that are **not** covered by any fragment.
 - `Result.render()` – merge transformed fragments and raw text back into a single output string.
