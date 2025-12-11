@@ -1,3 +1,4 @@
++ `textual.UTF8String` is now a symbolic string alias.
 + [Textual.swift](helpers/swift/README.md) a Lightweight Swift utility to work with `textual` `Result` objects in iOS / macOS clients.
 + [textual.js](helpers/js/README.md) a Lightweight ES6 utility to work with `textual` `Result` objects in the browser.
 
