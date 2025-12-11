@@ -1,5 +1,5 @@
 module github.com/benoit-pereira-da-silva/textual
 
-go 1.24
+go 1.23
 
 
