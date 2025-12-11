@@ -353,15 +353,15 @@ func (r *Router) selectRoutes(ctx context.Context, res Result) []int {
 
 	switch r.strategy {
 	case RoutingStrategyBroadcast:
-		// Send to every matching route.
+		// Route to every matching route.
 		return eligible
 
 	case RoutingStrategyFirstMatch:
-		// Send only to the first matching route.
+		// Route only to the first matching route.
 		return []int{eligible[0]}
 
 	case RoutingStrategyRandom:
-		// Randomly pick one among the matching routes.
+		// Route Randomly to one among the matching routes.
 		r.mu.Lock()
 		idx := r.rnd.Intn(len(eligible))
 		chosen := eligible[idx]
@@ -369,7 +369,7 @@ func (r *Router) selectRoutes(ctx context.Context, res Result) []int {
 		return []int{chosen}
 
 	case RoutingStrategyRoundRobin:
-		// Round‑robin among matching routes.
+		//Route to one among matching routes, balance the load equitably.
 		r.mu.Lock()
 		idx := int(r.counter % uint64(len(eligible)))
 		chosen := eligible[idx]
