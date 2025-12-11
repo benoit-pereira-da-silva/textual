@@ -11,7 +11,7 @@ It focuses on:
   internal UTF‑8 representation.
 - **Transformations** – describe end‑to‑end text conversions with metadata.
 
-The library is used by higher‑level projects but can be
+The library is used by higher‑level projects like [Tipa](https://github.com/temporal-IPA/tipa/) but can be
 used standalone in any Go program that needs robust, incremental text
 processing.
 
