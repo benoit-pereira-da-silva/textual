@@ -37,8 +37,8 @@ var FS embed.FS
 const defaultExcerptPath = "files/les_fleurs_du_mal.txt"
 
 var (
-	minDelayMS = 10  // minimum delay between batches in milliseconds
-	maxDelayMS = 100 // maximum delay between batches in milliseconds
+	minDelayMS = 1  // minimum delay between batches in milliseconds
+	maxDelayMS = 50 // maximum delay between batches in milliseconds
 )
 
 // caseKind models the original casing of a rune at a given position inside a
@@ -69,6 +69,7 @@ func main() {
 	inputPath := flag.String("input", defaultExcerptPath, "path to the input text file (UTF-8)")
 	minDelay := flag.Int("min-delay", minDelayMS, "minimum delay in milliseconds before processing a line")
 	maxDelay := flag.Int("max-delay", maxDelayMS, "maximum delay in milliseconds before processing a line")
+	wordByWord := flag.Bool("word-by-word", false, "use words by word")
 	flag.Parse()
 
 	var f fs.File
@@ -104,6 +105,10 @@ func main() {
 	// Construct an IOReaderProcessor that will scan the file line-by-line and
 	// feed each line as a textual.Result into the processor.
 	ioProc := textual.NewIOReaderProcessor(processor, f)
+	if *wordByWord {
+		// We rep
+		ioProc.SetSplitFunc(textual.ScanExpression)
+	}
 
 	// Use a background context for this small example. In a real application
 	// you would probably derive it from a parent context or hook it to signals.
@@ -116,7 +121,12 @@ func main() {
 		// Render the textual.Result back to a string and display it on stdout.
 		// Because the reverse-words processor updates Result.Text directly and
 		// does not add fragments, Render() simply returns the transformed text.
-		fmt.Println(res.Render())
+		if *wordByWord {
+			fmt.Print(res.Render())
+		} else {
+			fmt.Println(res.Render())
+		}
+
 	}
 }
 
