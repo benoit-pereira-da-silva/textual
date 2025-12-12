@@ -1,27 +1,29 @@
 # textual-swift
 
-Lightweight Swift utilities to work with `textual` `Result` objects in iOS / macOS clients.
+Lightweight Swift utilities to work with `textual` **`Parcel`** objects in iOS / macOS clients.
 
 This module is the client-side Swift counterpart of the Go `textual`:
 
-- `Result.rawTexts()` – compute the raw segments of a text that are **not** covered by any fragment.
-- `Result.render()` – merge transformed fragments and raw text back into a single output string.
+- `Parcel.rawTexts()` – compute the raw segments of a text that are **not** covered by any fragment.
+- `Parcel.render()` – merge transformed fragments and raw text back into a single output string.
+- A minimal `UTF8String` helper (mirrors Go’s `textual.String`) when you only need plain text + index + error.
 - `EncodingID` catalogue – mirror of the Go `EncodingID` enum and `nameToEncoding` dictionary.
 
 No networking or transcoding is implemented here on purpose: this file is
-transport-agnostic and only deals with in-memory `Result` values.
+transport-agnostic and only deals with in-memory `Parcel` values.
 
 ## Features
 
-- ✅ Structs matching the Go `Result`, `Fragment`, and `RawText` layout.
+- ✅ Structs matching the Go `Parcel`, `Fragment`, and `RawText` layout.
 - ✅ `rawTexts()` and `render()` logic aligned with the Go implementation.
+- ✅ Minimal `UTF8String` carrier helper mirroring Go’s `textual.String`.
 - ✅ `EncodingID` enum with the same numeric values as the Go / JS versions.
 - ✅ `EncodingID.nameToEncoding` and `EncodingID.parse(_:)` helpers.
 - ✅ `Codable` conformance for straightforward JSON decoding.
 
 ## Installation
 
-Just drop `TextualStreamUtils.swift` into your project:
+Just drop `Textual.swift` into your project:
 
 - Xcode: add the file to your app target.
 - Swift Package: add it to one of your targets’ sources.
@@ -45,10 +47,17 @@ public struct RawText: Codable, Equatable {
     public var len: Int
 }
 
-public struct Result: Codable, Equatable {
+public struct Parcel: Codable, Equatable {
     public var index: Int
     public var text: String
     public var fragments: [Fragment]
+    public var error: String?
+}
+
+// Minimal carrier mirroring Go textual.String
+public struct UTF8String: Codable, Equatable {
+    public var value: String
+    public var index: Int
     public var error: String?
 }
 ```
@@ -65,7 +74,7 @@ import Foundation
 
 // Assuming `data` is a Data value from URLSession or WebSocket.
 let decoder = JSONDecoder()
-let result = try decoder.decode(Result.self, from: data)
+let parcel = try decoder.decode(Parcel.self, from: data)
 ```
 
 Example JSON:
@@ -83,22 +92,30 @@ Example JSON:
 ## RawTexts / Render
 
 ```swift
-// Start from a decoded Result
-let res: Result = ...
+let p: Parcel = ...
 
-// Get the segments of the original text that have NOT been transformed.
-let rawParts: [RawText] = res.rawTexts()
-
-// Reconstruct the display string mixing transformed and raw segments.
-let rendered: String = res.render()
+let rawParts: [RawText] = p.rawTexts()
+let rendered: String = p.render()
 ```
 
-You can also create Results directly in Swift, mirroring the Go `Input` helper:
+You can also create Parcels directly in Swift, mirroring the JS `input(...)` helper:
 
 ```swift
-let res = input("Hello, café")          // index = -1, no fragments
-let rendered = res.render()             // -> "Hello, café"
+let p = input("Hello, café")            // index = -1, no fragments
+let rendered = p.render()               // -> "Hello, café"
 ```
+
+## Minimal UTF8String carrier
+
+Use `UTF8String` when you only need to carry plain UTF‑8 text with an index and
+an optional error string:
+
+```swift
+let s = utf8String("plain token").withIndex(42)
+print(s.utf8String()) // "plain token"
+```
+
+This mirrors the role of Go’s `textual.String`.
 
 ## Encoding dictionary
 
@@ -130,7 +147,7 @@ the JS `parseEncoding(name)` helper.
 
 ## Notes on indexing
 
-- `Result.rawTexts()` and `Result.render()` assume all positions and lengths
+- `Parcel.rawTexts()` and `Parcel.render()` assume all positions and lengths
   (`pos`, `len`) are expressed in units of **Unicode scalars**.
 - If you compute fragment positions in Swift, prefer iterating over
   `text.unicodeScalars` rather than `text.utf16` or `text.indices` to stay

@@ -1,23 +1,27 @@
-
-
 // textual.js
-// Lightweight ES6 utilities to work with "textual" Result objects in a browser.
+// Lightweight ES6 utilities to work with "textual" Parcel objects in a browser.
 //
 // This file mirrors the behavior of the Go "textual" package for:
-//   - Result.RawTexts()
-//   - Result.Render()
+//   - Parcel.RawTexts()
+//   - Parcel.UTF8String() (exposed here as render()/utf8String())
 // and exposes an EncodingID map plus helpers similar to encoding.go.
 //
-// It is transport-agnostic: it assumes you already receive Result-like JSON
-// objects (for example, from SSE, WebSocket, or XHR) and helps you manipulate
+// It also provides a minimal UTF8String helper mirroring Go's textual.String,
+// useful when you only need plain UTF‑8 text + index + error in client code.
+//
+// It is transport-agnostic: it assumes you already receive Parcel-like JSON
+// objects (for example, from SSE, WebSocket, or fetch) and helps you manipulate
 // them in the browser.
 //
 // Usage (ES modules):
-//   import { Result, input, EncodingID, parseEncoding, encodingName } from './textual-stream-utils.js';
+//   import { Parcel, UTF8String, input, utf8String, EncodingID, parseEncoding, encodingName } from './textual.js';
 //
-//   const res = input('Hello, café');
-//   const rawParts = res.rawTexts();
-//   const rendered = res.render();
+//   const p = input('Hello, café');
+//   const rawParts = p.rawTexts();
+//   const rendered = p.render();
+//
+//   const s = utf8String('plain text');
+//   console.log(s.utf8String());
 //
 // Copyright 2026 Benoit Pereira da Silva
 //
@@ -34,9 +38,48 @@
 // limitations under the License.
 
 /**
- * @typedef {string} UTF8String
+ * @typedef {string} UTF8Text
  * Documentation-only alias: all strings are assumed to be valid UTF-8.
  */
+
+/**
+ * normalizeError turns any error-like value into a portable string.
+ *
+ * The Go side serializes `error` as a string, so this helper keeps the JS side
+ * consistent by storing errors as strings (or null).
+ *
+ * @param {*} err
+ * @returns {string|null}
+ */
+function normalizeError(err) {
+    if (err === null || typeof err === 'undefined') {
+        return null;
+    }
+    if (err instanceof Error) {
+        return err.message || String(err);
+    }
+    const s = String(err);
+    return s.length > 0 ? s : null;
+}
+
+/**
+ * joinErrorStrings merges two error strings into a single string.
+ *
+ * This mirrors the "error join" intent from Go's errors.Join, but keeps the
+ * representation simple and portable for JSON clients.
+ *
+ * @param {string|null} a
+ * @param {string|null} b
+ * @returns {string|null}
+ */
+function joinErrorStrings(a, b) {
+    const aa = normalizeError(a);
+    const bb = normalizeError(b);
+    if (!aa) return bb;
+    if (!bb) return aa;
+    if (aa === bb) return aa;
+    return `${aa}; ${bb}`;
+}
 
 /**
  * Fragment represents a transformed portion of the original text.
@@ -47,7 +90,7 @@
 export class Fragment {
     /**
      * @param {Object} opts
-     * @param {UTF8String} [opts.transformed] - Transformed text (IPA, SAMPA, etc.).
+     * @param {UTF8Text} [opts.transformed] - Transformed text (IPA, SAMPA, etc.).
      * @param {number} [opts.pos] - First code-point position in the original text.
      * @param {number} [opts.len] - Length in code points in the original text.
      * @param {number} [opts.confidence] - Optional confidence value.
@@ -60,7 +103,7 @@ export class Fragment {
                     confidence = 0,
                     variant = 0
                 } = {}) {
-        /** @type {UTF8String} */
+        /** @type {UTF8Text} */
         this.transformed = String(transformed);
         /** @type {number} */
         this.pos = Number.isFinite(pos) ? Math.trunc(pos) : 0;
@@ -76,18 +119,18 @@ export class Fragment {
 /**
  * RawText represents an untouched segment of the original text.
  *
- * It is computed from a Result and covers every range that is not overlapped
+ * It is computed from a Parcel and covers every range that is not overlapped
  * by any Fragment (after merging overlapping fragments).
  */
 export class RawText {
     /**
      * @param {Object} opts
-     * @param {UTF8String} [opts.text] - Raw text content.
+     * @param {UTF8Text} [opts.text] - Raw text content.
      * @param {number} [opts.pos] - First code-point position in the original text.
      * @param {number} [opts.len] - Length in code points.
      */
     constructor({ text = '', pos = 0, len = 0 } = {}) {
-        /** @type {UTF8String} */
+        /** @type {UTF8Text} */
         this.text = String(text);
         /** @type {number} */
         this.pos = Number.isFinite(pos) ? Math.trunc(pos) : 0;
@@ -97,33 +140,193 @@ export class RawText {
 }
 
 /**
- * Result is the central value in the textual pipeline.
+ * UTF8String is the minimal "carrier" helper, mirroring Go's textual.String.
  *
- * It mirrors the Go struct:
- *   type Result struct {
- *     Index     int
- *     Text      UTF8String
- *     Fragments []Fragment
- *     Error     error
- *   }
+ * Use it when you only need:
+ *   - a UTF‑8 string (value)
+ *   - an optional ordering hint (index)
+ *   - an optional, portable error string (error)
+ *
+ * This helper is intentionally small and does NOT implement Parcel-like
+ * fragment logic.
+ */
+export class UTF8String {
+    /**
+     * @param {Object} opts
+     * @param {UTF8Text} [opts.value] - UTF‑8 text.
+     * @param {number} [opts.index] - Optional index in a stream.
+     * @param {string|null} [opts.error] - Optional error string.
+     */
+    constructor({ value = '', index = 0, error = null } = {}) {
+        /** @type {UTF8Text} */
+        this.value = String(value);
+        /** @type {number} */
+        this.index = Number.isFinite(index) ? Math.trunc(index) : 0;
+        /** @type {string|null} */
+        this.error = normalizeError(error);
+    }
+
+    /**
+     * Builds a UTF8String from JSON.
+     *
+     * Accepts both lower-case and Go-style exported keys:
+     *   - value / Value
+     *   - index / Index
+     *   - error / Error
+     *
+     * @param {Object|UTF8String} json
+     * @returns {UTF8String}
+     */
+    static fromJSON(json) {
+        if (json instanceof UTF8String) {
+            return json;
+        }
+        if (!json || typeof json !== 'object') {
+            return new UTF8String();
+        }
+        return new UTF8String({
+            value: json.value ?? json.Value ?? '',
+            index: json.index ?? json.Index ?? 0,
+            error: json.error ?? json.Error ?? null
+        });
+    }
+
+    /**
+     * Serializes the value to a JSON-friendly object.
+     *
+     * @returns {{value: string, index: number, error: (string|null)}}
+     */
+    toJSON() {
+        return {
+            value: this.value,
+            index: this.index,
+            error: this.error
+        };
+    }
+
+    /**
+     * Returns the UTF‑8 text (Go: UTF8String()).
+     *
+     * @returns {UTF8Text}
+     */
+    utf8String() {
+        return this.value;
+    }
+
+    /**
+     * Creates a new UTF8String from a UTF‑8 token (Go: FromUTF8String()).
+     *
+     * @param {UTF8Text} text
+     * @returns {UTF8String}
+     */
+    fromUTF8String(text) {
+        return new UTF8String({ value: String(text), index: 0, error: null });
+    }
+
+    /**
+     * Returns a copy of the value with its index set (Go: WithIndex()).
+     *
+     * @param {number} index
+     * @returns {UTF8String}
+     */
+    withIndex(index) {
+        return new UTF8String({
+            value: this.value,
+            index: Number.isFinite(index) ? Math.trunc(index) : 0,
+            error: this.error
+        });
+    }
+
+    /**
+     * Returns the stored index (Go: GetIndex()).
+     *
+     * @returns {number}
+     */
+    getIndex() {
+        return this.index;
+    }
+
+    /**
+     * Returns a copy of the value with its error merged (Go: WithError()).
+     *
+     * @param {*} err
+     * @returns {UTF8String}
+     */
+    withError(err) {
+        const merged = joinErrorStrings(this.error, err);
+        return new UTF8String({
+            value: this.value,
+            index: this.index,
+            error: merged
+        });
+    }
+
+    /**
+     * Returns the stored error (Go: GetError()).
+     *
+     * @returns {string|null}
+     */
+    getError() {
+        return this.error;
+    }
+
+    /**
+     * Aggregates multiple UTF8String values into one.
+     *
+     * Behaviour mirrors Go's textual.String.Aggregate:
+     *   - Items are copied and stably sorted by index.
+     *   - When indices are equal, value is used as a tie-breaker.
+     *   - The output index is reset to 0.
+     *   - Errors are merged into a single portable string.
+     *
+     * @param {UTF8String[]} items
+     * @returns {UTF8String}
+     */
+    aggregate(items) {
+        const list = (items || []).map((it) => UTF8String.fromJSON(it));
+
+        list.sort((a, b) => {
+            if (a.index !== b.index) {
+                return a.index - b.index;
+            }
+            // Tie-breaker for deterministic ordering.
+            return a.value < b.value ? -1 : a.value > b.value ? 1 : 0;
+        });
+
+        let out = '';
+        let err = null;
+        for (const it of list) {
+            out += it.value;
+            err = joinErrorStrings(err, it.error);
+        }
+        return new UTF8String({ value: out, index: 0, error: err });
+    }
+}
+
+/**
+ * Parcel is the rich value in the textual pipeline.
+ *
+ * It mirrors the Go struct (textual.Parcel) and supports:
+ *   - rawTexts(): compute the untouched spans of the original text
+ *   - render(): merge fragments and raw text back into a single string
  *
  * In JavaScript:
- *   - Text is a UTF-8 string.
- *   - Fragments is an array of Fragment instances.
- *   - Error can be anything (Error instance, string, null, ...).
+ *   - `text` is a UTF‑8 string.
+ *   - `fragments` is an array of Fragment instances.
+ *   - `error` is kept as an opaque value (usually a string) for portability.
  */
-export class Result {
+export class Parcel {
     /**
      * @param {Object} opts
      * @param {number} [opts.index] - Optional index in a stream.
-     * @param {UTF8String} [opts.text] - Original UTF-8 text.
+     * @param {UTF8Text} [opts.text] - Original UTF‑8 text.
      * @param {Array<Fragment|Object>} [opts.fragments] - Fragments describing transformed regions.
      * @param {*} [opts.error] - Optional error; not interpreted by this module.
      */
     constructor({ index = -1, text = '', fragments = [], error = null } = {}) {
         /** @type {number} */
         this.index = Number.isFinite(index) ? Math.trunc(index) : -1;
-        /** @type {UTF8String} */
+        /** @type {UTF8Text} */
         this.text = String(text);
         /** @type {Fragment[]} */
         this.fragments = (fragments || []).map((f) =>
@@ -134,29 +337,29 @@ export class Result {
     }
 
     /**
-     * Constructs a Result from a plain JSON object that follows the same
+     * Constructs a Parcel from a plain JSON object that follows the same
      * shape as the Go struct when serialized to JSON.
      *
-     * @param {Object|Result} json
-     * @returns {Result}
+     * @param {Object|Parcel} json
+     * @returns {Parcel}
      */
     static fromJSON(json) {
-        if (json instanceof Result) {
+        if (json instanceof Parcel) {
             return json;
         }
         if (!json || typeof json !== 'object') {
-            return new Result();
+            return new Parcel();
         }
-        return new Result({
-            index: json.index,
-            text: json.text,
-            fragments: json.fragments,
-            error: json.error || null
+        return new Parcel({
+            index: json.index ?? json.Index ?? -1,
+            text: json.text ?? json.Text ?? '',
+            fragments: json.fragments ?? json.Fragments ?? [],
+            error: json.error ?? json.Error ?? null
         });
     }
 
     /**
-     * Serializes the Result to a plain JSON-friendly object.
+     * Serializes the Parcel to a plain JSON-friendly object.
      *
      * @returns {Object}
      */
@@ -173,6 +376,70 @@ export class Result {
             })),
             error: this.error
         };
+    }
+
+    /**
+     * Carrier-like convenience: returns a copy with the index set.
+     *
+     * @param {number} index
+     * @returns {Parcel}
+     */
+    withIndex(index) {
+        return new Parcel({
+            index: Number.isFinite(index) ? Math.trunc(index) : -1,
+            text: this.text,
+            fragments: this.fragments,
+            error: this.error
+        });
+    }
+
+    /**
+     * Carrier-like convenience: returns the index.
+     *
+     * @returns {number}
+     */
+    getIndex() {
+        return this.index;
+    }
+
+    /**
+     * Carrier-like convenience: returns a copy with an error merged.
+     *
+     * The error is stored as an opaque value, but when both existing and new
+     * errors are string-like they are concatenated.
+     *
+     * @param {*} err
+     * @returns {Parcel}
+     */
+    withError(err) {
+        const a = normalizeError(this.error);
+        const b = normalizeError(err);
+        const merged = joinErrorStrings(a, b);
+        return new Parcel({
+            index: this.index,
+            text: this.text,
+            fragments: this.fragments,
+            error: merged ?? this.error ?? err
+        });
+    }
+
+    /**
+     * Carrier-like convenience: returns the stored error.
+     *
+     * @returns {*}
+     */
+    getError() {
+        return this.error;
+    }
+
+    /**
+     * Carrier-like convenience: builds a new Parcel from a UTF‑8 token.
+     *
+     * @param {UTF8Text} text
+     * @returns {Parcel}
+     */
+    fromUTF8String(text) {
+        return new Parcel({ index: -1, text: String(text), fragments: [], error: null });
     }
 
     /**
@@ -285,7 +552,7 @@ export class Result {
      * Reconstructs a single output string by merging transformed fragments and
      * raw text segments according to their positions.
      *
-     * Rules (matching the Go Render method):
+     * Rules (matching the Go UTF8String/Render behaviour):
      *   - Both fragments and raw texts reference absolute positions in the
      *     original string.
      *   - All segments (fragments + raw) are collected with their start pos.
@@ -298,11 +565,11 @@ export class Result {
      * one (in the original fragments array) is used, which is consistent with
      * the Go implementation.
      *
-     * @returns {UTF8String}
+     * @returns {UTF8Text}
      */
     render() {
         /**
-         * @typedef {{pos: number, text: UTF8String}} Segment
+         * @typedef {{pos: number, text: UTF8Text}} Segment
          */
         /** @type {Segment[]} */
         const segments = [];
@@ -343,25 +610,111 @@ export class Result {
         }
         return out;
     }
+
+    /**
+     * Alias for render(), matching the Carrier terminology (Go: UTF8String()).
+     *
+     * @returns {UTF8Text}
+     */
+    utf8String() {
+        return this.render();
+    }
+
+    /**
+     * Aggregates multiple parcels into a single parcel by concatenating their
+     * `text` fields and offsetting fragment positions.
+     *
+     * This is a convenience that mirrors the intent of Go Carrier.Aggregate for
+     * the Parcel shape:
+     *   - texts are concatenated in the provided order
+     *   - fragment positions are shifted by the code-point length of the
+     *     preceding texts
+     *   - errors are merged into a single portable string when possible
+     *
+     * @param {Parcel[]} parcels
+     * @returns {Parcel}
+     */
+    aggregate(parcels) {
+        const list = (parcels || []).map((p) => Parcel.fromJSON(p));
+
+        let text = '';
+        let offset = 0;
+        /** @type {Fragment[]} */
+        const fragments = [];
+        let err = null;
+
+        for (const p of list) {
+            const pText = String(p.text);
+            const pLen = Array.from(pText).length;
+
+            // Merge errors.
+            err = joinErrorStrings(err, p.error);
+
+            // Copy fragments with shifted positions.
+            if (Array.isArray(p.fragments)) {
+                for (const f of p.fragments) {
+                    if (!f) continue;
+                    fragments.push(
+                        new Fragment({
+                            transformed: f.transformed,
+                            pos: (Number.isFinite(f.pos) ? Math.trunc(f.pos) : 0) + offset,
+                            len: Number.isFinite(f.len) ? Math.trunc(f.len) : 0,
+                            confidence: Number.isFinite(f.confidence) ? f.confidence : 0,
+                            variant: Number.isFinite(f.variant) ? Math.trunc(f.variant) : 0
+                        })
+                    );
+                }
+            }
+
+            text += pText;
+            offset += pLen;
+        }
+
+        return new Parcel({
+            index: -1,
+            text,
+            fragments,
+            error: err
+        });
+    }
 }
 
 /**
- * Convenience factory mirroring the Go Input(...) helper.
+ * Convenience factory mirroring the "create from UTF‑8 text" pattern.
  *
- * Creates a base Result with:
+ * Creates a base Parcel with:
  *   - index = -1
  *   - text = given argument
  *   - fragments = []
  *   - error = null
  *
- * @param {UTF8String} text
- * @returns {Result}
+ * @param {UTF8Text} text
+ * @returns {Parcel}
  */
 export function input(text) {
-    return new Result({
+    return new Parcel({
         index: -1,
         text: String(text),
         fragments: [],
+        error: null
+    });
+}
+
+/**
+ * Convenience factory for the minimal UTF8String carrier helper.
+ *
+ * Creates a base UTF8String with:
+ *   - value = given argument
+ *   - index = 0
+ *   - error = null
+ *
+ * @param {UTF8Text} text
+ * @returns {UTF8String}
+ */
+export function utf8String(text) {
+    return new UTF8String({
+        value: String(text),
+        index: 0,
         error: null
     });
 }

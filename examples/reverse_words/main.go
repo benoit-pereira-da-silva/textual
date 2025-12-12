@@ -53,9 +53,9 @@ const (
 )
 
 // main wires the reverse-words processor into an IOReaderProcessor that streams
-// Text from disk or embedded fs, reverses every word,
+// text from disk or embedded fs, reverses every word,
 // waits a small random delay between each batch, and prints the transformed
-// lines to stdout.
+// tokens to stdout.
 //
 // Usage:
 //
@@ -67,9 +67,9 @@ func main() {
 	// Command-line flags.
 	twice := flag.Bool("twice", false, "apply the reverse-words processor twice")
 	inputPath := flag.String("input", defaultExcerptPath, "path to the input text file (UTF-8)")
-	minDelay := flag.Int("min-delay", minDelayMS, "minimum delay in milliseconds before processing a line")
-	maxDelay := flag.Int("max-delay", maxDelayMS, "maximum delay in milliseconds before processing a line")
-	wordByWord := flag.Bool("word-by-word", false, "use words by word")
+	minDelay := flag.Int("min-delay", minDelayMS, "minimum delay in milliseconds before processing a token")
+	maxDelay := flag.Int("max-delay", maxDelayMS, "maximum delay in milliseconds before processing a token")
+	wordByWord := flag.Bool("word-by-word", false, "use word-by-word tokenization (ScanExpression)")
 	flag.Parse()
 
 	var f fs.File
@@ -88,8 +88,6 @@ func main() {
 		maxDelayMS = minDelayMS + 1
 	}
 
-	// Open the input file containing the Baudelaire excerpt.
-
 	if err != nil {
 		log.Fatalf("unable to open input file %q: %v", *inputPath, err)
 	}
@@ -102,11 +100,12 @@ func main() {
 	// Build the reverse-words processor; optionally chain it twice.
 	processor := buildProcessor(*twice)
 
-	// Construct an IOReaderProcessor that will scan the file line-by-line and
-	// feed each line as a textual.Parcel into the processor.
+	// Construct an IOReaderProcessor that will scan the file token-by-token and
+	// feed each token as a textual.String into the processor.
 	ioProc := textual.NewIOReaderProcessor(processor, f)
 	if *wordByWord {
-		// We rep
+		// Switch from line-based tokenization to expression tokenization:
+		// [optional leading whitespace][word/punctuation][optional trailing whitespace/newlines]
 		ioProc.SetSplitFunc(textual.ScanExpression)
 	}
 
@@ -118,7 +117,7 @@ func main() {
 	out := ioProc.Start()
 
 	for res := range out {
-		// Render the textual.Parcel back to a string and display it on stdout.
+		// Render the textual.String back to a UTF-8 string and display it on stdout.
 		str := res.UTF8String()
 		if *wordByWord {
 			fmt.Print(str)
@@ -158,21 +157,24 @@ func buildProcessor(twice bool) textual.Processor[textual.String] {
 						return
 					}
 
-					// Transform the line by reversing each word while keeping
+					// Transform the token by reversing each word while keeping
 					// punctuation and whitespace in place.
 					transformed := reverseWords(res.UTF8String())
 
-					// Wait for a random delay between 10ms and 100ms to simulate a
-					// streaming / progressive processing pipeline.
+					// Wait for a random delay between min-delay and max-delay
+					// milliseconds to simulate a streaming / progressive workload.
 					delayRange := maxDelayMS - minDelayMS + 1
 					delay := minDelayMS + rnd.Intn(delayRange)
 					time.Sleep(time.Duration(delay) * time.Millisecond)
 
-					// Create a new Parcel preserving the index and error fields.
-					outRes := res.FromUTF8String(transformed)
+					// Create a new String, preserving the index (ordering hint) and
+					// any existing per-item error.
+					outRes := res.FromUTF8String(transformed).
+						WithIndex(res.GetIndex()).
+						WithError(res.GetError())
 
-					// Forward the transformed Parcel downstream, staying
-					// responsive to context cancellation.
+					// Forward the transformed String downstream, staying responsive
+					// to context cancellation.
 					select {
 					case <-ctx.Done():
 						return
@@ -189,7 +191,7 @@ func buildProcessor(twice bool) textual.Processor[textual.String] {
 		return reverseStage
 	}
 
-	// Chain the reverse-words processor twice. Each line is processed by the
+	// Chain the reverse-words processor twice. Each token is processed by the
 	// first stage, then by the second stage. Applying the same transformation
 	// twice restores the original text (modulo casing rules).
 	return textual.NewChain(reverseStage, reverseStage)

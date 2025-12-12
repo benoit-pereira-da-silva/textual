@@ -24,10 +24,11 @@ import (
 //
 // It is useful when you only need to stream UTF-8 text through processors and
 // you don't need partial spans, variants, or per-token metadata beyond an
-// optional ordering index.
+// optional ordering index and an optional per-item error.
 //
 // Index is an ordering hint used by Aggregate (and by IOReaderProcessor, which
 // sets it to the token sequence number). Value carries the UTF-8 text.
+// Error carries a non-fatal processing error attached by processors.
 //
 // String implements Carrier[String] and can be used with the generic stack
 // (Processor, Chain, Router, Transformation, ...).
@@ -64,6 +65,9 @@ func (s String) GetIndex() int {
 //
 // When indices are equal, the Value is used as a tie-breaker to keep the sort
 // stable and deterministic.
+//
+// Errors from all inputs are merged (using errors.Join) and attached to the
+// returned value.
 func (s String) Aggregate(stringers []String) String {
 	items := make([]String, len(stringers))
 	copy(items, stringers)
@@ -83,11 +87,15 @@ func (s String) Aggregate(stringers []String) String {
 	var b strings.Builder
 	b.Grow(total)
 
+	var aggErr error
 	for _, it := range items {
 		b.WriteString(it.Value)
+		if it.Error != nil {
+			aggErr = errors.Join(aggErr, it.Error)
+		}
 	}
 
-	return String{Value: b.String(), Index: 0}
+	return String{Value: b.String(), Index: 0, Error: aggErr}
 }
 
 func (s String) WithError(err error) String {

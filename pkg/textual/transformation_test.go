@@ -104,7 +104,7 @@ func TestTransformationProcess_MultipleResults(t *testing.T) {
 	rc := &trackingReadCloser{Reader: bytes.NewReader([]byte(original))}
 	wc := &trackingWriteCloser{}
 
-	// This processor splits the input Text into two Results and emits both.
+	// This processor splits the input text into two Parcels and emits both.
 	splitting := ProcessorFunc[Parcel](func(ctx context.Context, in <-chan Parcel) <-chan Parcel {
 		out := make(chan Parcel)
 		go func() {
@@ -122,7 +122,7 @@ func TestTransformationProcess_MultipleResults(t *testing.T) {
 					mid := len(text) / 2
 					left := instance.FromUTF8String(text[:mid])
 					right := instance.FromUTF8String(text[mid:])
-					// Emit both Results.
+					// Emit both Parcels.
 					select {
 					case <-ctx.Done():
 						return

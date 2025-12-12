@@ -50,6 +50,15 @@ type UTF8String = string
 //     This is used when a processor emits several outputs for one logical input
 //     (split, fan‑out/fan‑in, etc.).
 //
+//   - WithError / GetError attach and retrieve a non-fatal, per-item error.
+//     This enables processors to report recoverable issues (warnings, partial
+//     failures, fallbacks…) without breaking the stream.
+//
+//     Important: errors carried by S are *data*, not control-flow. Most of the
+//     textual stack does not stop when GetError() != nil. It is up to your
+//     processors and/or the final consumer to decide how to handle error-carrying
+//     items (route them, log them, drop them, etc.).
+//
 // Implementations should be cheap to copy (typically small structs). Pointer
 // receivers/types are supported, but methods must be safe to call on the zero
 // value (including nil pointers).

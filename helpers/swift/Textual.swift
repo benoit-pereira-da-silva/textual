@@ -1,18 +1,21 @@
 //
 // Textual.swift
 //
-// Lightweight Swift utilities to work with "textual" Result objects in
+// Lightweight Swift utilities to work with "textual" Parcel objects in
 // client-side code (iOS, macOS, watchOS, tvOS).
 //
 // This file mirrors the behaviour of the Go "textual" package for:
 //
-//   - Result.rawTexts()
-//   - Result.render()
+//   - Parcel.rawTexts()
+//   - Parcel.render() / Parcel.utf8String()
 //
 // and exposes the same EncodingID catalogue and name lookup helpers as
 // encoding.go.
 //
-// It is transport-agnostic: it assumes you already receive Result-like JSON
+// It also provides a minimal UTF8String helper mirroring Go's textual.String,
+// useful when you only need plain UTF‑8 text + index + error in client code.
+//
+// It is transport-agnostic: it assumes you already receive Parcel-like JSON
 // objects (for example from URLSession, WebSocket, or other networking code)
 // and helps you manipulate them in your Swift client.
 //
@@ -33,10 +36,139 @@
 
 import Foundation
 
-/// UTF8String is used for expressivity: all strings are assumed to be UTF-8.
-public typealias UTF8String = String
+/// UTF8Text is used for expressivity: all strings are assumed to be UTF-8.
+///
+/// The Go package uses `type UTF8String = string` as a readability alias.
+/// On the Swift side we keep using `String` for storage and expose this alias
+/// for clarity in APIs.
+public typealias UTF8Text = String
 
-// MARK: - Core data types
+// MARK: - Minimal carrier: UTF8String (mirrors Go textual.String)
+
+/// UTF8String is the minimal "carrier" helper, mirroring Go's `textual.String`.
+///
+/// Use it when you only need:
+///   - a UTF‑8 string (`value`)
+///   - an optional ordering hint (`index`)
+///   - an optional, portable error string (`error`)
+///
+/// This helper is intentionally small and does NOT implement Parcel-like
+/// fragment logic.
+public struct UTF8String: Codable, Equatable {
+    /// The UTF‑8 text.
+    public var value: UTF8Text
+
+    /// Optional index in a stream.
+    public var index: Int
+
+    /// Optional error string (portable across JSON clients).
+    public var error: String?
+
+    public init(
+        value: UTF8Text,
+        index: Int = 0,
+        error: String? = nil
+    ) {
+        self.value = value
+        self.index = index
+        self.error = error
+    }
+
+    /// Returns the UTF‑8 text (Go: UTF8String()).
+    public func utf8String() -> UTF8Text {
+        return value
+    }
+
+    /// Creates a new UTF8String from a UTF‑8 token (Go: FromUTF8String()).
+    ///
+    /// The Swift helper keeps this as a value-level constructor for convenience.
+    public func fromUTF8String(_ text: UTF8Text) -> UTF8String {
+        return UTF8String(value: text, index: 0, error: nil)
+    }
+
+    /// Returns a copy with its index set (Go: WithIndex()).
+    public func withIndex(_ index: Int) -> UTF8String {
+        var copy = self
+        copy.index = index
+        return copy
+    }
+
+    /// Returns the stored index (Go: GetIndex()).
+    public func getIndex() -> Int {
+        return index
+    }
+
+    /// Returns a copy with an error merged (Go: WithError()).
+    ///
+    /// Errors are stored as plain strings for portability. When multiple errors
+    /// are attached, they are concatenated with `; `.
+    public func withError(_ err: String?) -> UTF8String {
+        guard let err = err?.trimmingCharacters(in: .whitespacesAndNewlines), !err.isEmpty else {
+            return self
+        }
+        var copy = self
+        if let existing = copy.error, !existing.isEmpty {
+            if existing != err {
+                copy.error = existing + "; " + err
+            }
+        } else {
+            copy.error = err
+        }
+        return copy
+    }
+
+    /// Returns the stored error (Go: GetError()).
+    public func getError() -> String? {
+        return error
+    }
+
+    /// Aggregates multiple UTF8String values into one.
+    ///
+    /// Behaviour mirrors Go's `textual.String.Aggregate` intent:
+    ///   - Items are stably sorted by index.
+    ///   - When indices are equal, `value` is used as a tie-breaker.
+    ///   - The output index is reset to 0.
+    ///   - Errors are merged into a single portable string.
+    public func aggregate(_ items: [UTF8String]) -> UTF8String {
+        // Stable sort: keep original order as a final tie-breaker.
+        let indexed = items.enumerated().map { (offset: $0.offset, item: $0.element) }
+        let sorted = indexed.sorted { a, b in
+            if a.item.index != b.item.index {
+                return a.item.index < b.item.index
+            }
+            if a.item.value != b.item.value {
+                return a.item.value < b.item.value
+            }
+            return a.offset < b.offset
+        }.map { $0.item }
+
+        var out = ""
+        out.reserveCapacity(sorted.reduce(0) { $0 + $1.value.count })
+
+        var mergedError: String? = nil
+        for it in sorted {
+            out.append(it.value)
+            if let e = it.error, !e.isEmpty {
+                mergedError = (mergedError == nil) ? e : (mergedError == e ? mergedError : (mergedError! + "; " + e))
+            }
+        }
+
+        return UTF8String(value: out, index: 0, error: mergedError)
+    }
+}
+
+/// Convenience factory for the minimal UTF8String carrier helper.
+///
+/// Creates a base UTF8String with:
+///   - value = given argument
+///   - index = 0
+///   - error = nil
+@discardableResult
+public func utf8String(_ text: UTF8Text) -> UTF8String {
+    return UTF8String(value: text, index: 0, error: nil)
+}
+
+// MARK: - Core data types (rich carrier): Parcel / Fragment / RawText
 
 /// Fragment represents a transformed portion of the original text.
 ///
@@ -48,7 +180,7 @@ public typealias UTF8String = String
 /// IPA, SAMPA, pseudo-phonetics, etc.
 public struct Fragment: Codable, Equatable {
     /// The transformed text (IPA, SAMPA, etc.).
-    public var transformed: UTF8String
+    public var transformed: UTF8Text
 
     /// First scalar position in the original text.
     public var pos: Int
@@ -63,11 +195,11 @@ public struct Fragment: Codable, Equatable {
     public var variant: Int
 
     public init(
-    transformed: UTF8String,
-    pos: Int,
-    len: Int,
-    confidence: Double = 0,
-    variant: Int = 0
+        transformed: UTF8Text,
+        pos: Int,
+        len: Int,
+        confidence: Double = 0,
+        variant: Int = 0
     ) {
         self.transformed = transformed
         self.pos = pos
@@ -79,11 +211,11 @@ public struct Fragment: Codable, Equatable {
 
 /// RawText represents an untouched segment of the original text.
 ///
-/// It is computed from a Result and covers every range that is not overlapped
+/// It is computed from a Parcel and covers every range that is not overlapped
 /// by any Fragment (after merging overlapping fragments).
 public struct RawText: Codable, Equatable {
     /// The raw text content.
-    public var text: UTF8String
+    public var text: UTF8Text
 
     /// First scalar position in the original text.
     public var pos: Int
@@ -91,18 +223,18 @@ public struct RawText: Codable, Equatable {
     /// Length in scalars.
     public var len: Int
 
-    public init(text: UTF8String, pos: Int, len: Int) {
+    public init(text: UTF8Text, pos: Int, len: Int) {
         self.text = text
         self.pos = pos
         self.len = len
     }
 }
 
-/// Result is the central value in the textual pipeline.
+/// Parcel is the rich value in the textual pipeline.
 ///
-/// It mirrors the Go struct:
+/// It mirrors the Go struct (textual.Parcel):
 ///
-///   type Result struct {
+///   type Parcel struct {
 ///     Index     int
 ///     Text      UTF8String
 ///     Fragments []Fragment
@@ -110,15 +242,15 @@ public struct RawText: Codable, Equatable {
 ///   }
 ///
 /// In Swift:
-///   - `text` is a UTF-8 `String`.
+///   - `text` is a UTF-8 String.
 ///   - `fragments` is an array of Fragment values.
 ///   - `error` is an optional string; this helper does not interpret it.
-public struct Result: Codable, Equatable {
-    /// Optional index in a stream of results.
+public struct Parcel: Codable, Equatable {
+    /// Optional index in a stream of parcels.
     public var index: Int
 
     /// Original UTF-8 text.
-    public var text: UTF8String
+    public var text: UTF8Text
 
     /// Transformed fragments that reference ranges in `text`.
     public var fragments: [Fragment]
@@ -127,33 +259,126 @@ public struct Result: Codable, Equatable {
     public var error: String?
 
     public init(
-    index: Int = -1,
-    text: UTF8String,
-    fragments: [Fragment] = [],
-    error: String? = nil
+        index: Int = -1,
+        text: UTF8Text,
+        fragments: [Fragment] = [],
+        error: String? = nil
     ) {
         self.index = index
         self.text = text
         self.fragments = fragments
         self.error = error
     }
+
+    // MARK: - Carrier-like convenience helpers
+
+    /// Returns the UTF‑8 rendering (Go: UTF8String()).
+    public func utf8String() -> UTF8Text {
+        return render()
+    }
+
+    /// Creates a new Parcel from a UTF‑8 token (Go: FromUTF8String()).
+    public func fromUTF8String(_ text: UTF8Text) -> Parcel {
+        return Parcel(index: -1, text: text, fragments: [], error: nil)
+    }
+
+    /// Returns a copy with its index set (Go: WithIndex()).
+    public func withIndex(_ index: Int) -> Parcel {
+        var copy = self
+        copy.index = index
+        return copy
+    }
+
+    /// Returns the stored index (Go: GetIndex()).
+    public func getIndex() -> Int {
+        return index
+    }
+
+    /// Returns a copy with an error merged (Go: WithError()).
+    ///
+    /// Errors are stored as plain strings for portability. When multiple errors
+    /// are attached, they are concatenated with `; `.
+    public func withError(_ err: String?) -> Parcel {
+        guard let err = err?.trimmingCharacters(in: .whitespacesAndNewlines), !err.isEmpty else {
+            return self
+        }
+        var copy = self
+        if let existing = copy.error, !existing.isEmpty {
+            if existing != err {
+                copy.error = existing + "; " + err
+            }
+        } else {
+            copy.error = err
+        }
+        return copy
+    }
+
+    /// Returns the stored error (Go: GetError()).
+    public func getError() -> String? {
+        return error
+    }
+
+    /// Aggregates multiple parcels into a single parcel by concatenating their
+    /// `text` fields and offsetting fragment positions.
+    ///
+    /// This is a convenience that mirrors the intent of Go Carrier.Aggregate for
+    /// the Parcel shape:
+    ///   - texts are concatenated in the provided order
+    ///   - fragment positions are shifted by the Unicode scalar length of the
+    ///     preceding texts
+    ///   - errors are merged into a single portable string
+    public func aggregate(_ parcels: [Parcel]) -> Parcel {
+        var outText = ""
+        outText.reserveCapacity(parcels.reduce(0) { $0 + $1.text.count })
+
+        var outFragments: [Fragment] = []
+        outFragments.reserveCapacity(parcels.reduce(0) { $0 + $1.fragments.count })
+
+        var offset = 0
+        var mergedError: String? = nil
+
+        for p in parcels {
+            // Merge errors.
+            if let e = p.error, !e.isEmpty {
+                mergedError = (mergedError == nil) ? e : (mergedError == e ? mergedError : (mergedError! + "; " + e))
+            }
+
+            // Shift fragments.
+            for f in p.fragments {
+                outFragments.append(
+                    Fragment(
+                        transformed: f.transformed,
+                        pos: f.pos + offset,
+                        len: f.len,
+                        confidence: f.confidence,
+                        variant: f.variant
+                    )
+                )
+            }
+
+            outText.append(p.text)
+            offset += p.text.unicodeScalars.count
+        }
+
+        return Parcel(index: -1, text: outText, fragments: outFragments, error: mergedError)
+    }
 }
 
 // MARK: - Convenience construction
 
-/// Constructs a base Result to be used as a starting point, mirroring the
-/// Go helper `Input(text)` and the JS `input(text)` function.
+/// Constructs a base Parcel to be used as a starting point, mirroring the
+/// JS `input(text)` factory.
 ///
 /// - Parameter text: Original UTF-8 text.
-/// - Returns: A Result with index = -1, no fragments, and no error.
+/// - Returns: A Parcel with index = -1, no fragments, and no error.
 @discardableResult
-public func input(_ text: UTF8String) -> Result {
-    return Result(index: -1, text: text, fragments: [], error: nil)
+public func input(_ text: UTF8Text) -> Parcel {
+    return Parcel(index: -1, text: text, fragments: [], error: nil)
 }
 
 // MARK: - RawTexts / Render
 
-public extension Result {
+public extension Parcel {
     /// Computes the non-transformed segments of the original `text`.
     ///
     /// Behaviour is intentionally aligned with the Go implementation:
@@ -264,7 +489,7 @@ public extension Result {
     /// Reconstructs a single output string by merging transformed fragments and
     /// raw text segments according to their positions.
     ///
-    /// Rules (matching the Go `Render` method and the JS helper):
+    /// Rules (matching the Go behaviour and the JS helper):
     ///
     ///   - Both fragments and raw texts reference absolute positions in the
     ///     original string.
@@ -279,10 +504,10 @@ public extension Result {
     /// the Go implementation.
     ///
     /// - Returns: Reconstructed UTF-8 string.
-    func render() -> UTF8String {
+    func render() -> UTF8Text {
         struct Segment {
             let pos: Int
-            let text: UTF8String
+            let text: UTF8Text
         }
 
         var segments: [Segment] = []

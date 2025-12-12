@@ -1,12 +1,22 @@
+# Unreleased
+
++ Renamed `UTF8Stringer` to `Carrier`.
++ Renamed `Result` to `Parcel`.
++ Added error support to carriers (`WithError(err error)` / `GetError() error`) so processors can report per-item failures without breaking the stream.
++ Updated documentation and comments to reflect the Carrier / Parcel terminology.
++ Updated client helpers:
+    + `helpers/js` now targets `Parcel` and includes a minimal `UTF8String` helper mirroring Go’s `textual.String`.
+    + `helpers/swift` now targets `Parcel` and includes a minimal `UTF8String` helper mirroring Go’s `textual.String`.
 + Using `textual.String` in the [reverse_words example](examples/reverse_words/README.md).
-+ Added `textual.String` a minimal generic implementation of `textual.Carrier`
-+ Adapted `textual.Result` to implement `textual.Carrier`
-+ Exposing a generic interface `textual.Carrier`, and refactored the stack.
-+ Added `SyncApply`..
++ Added `textual.String`, a minimal generic implementation of `textual.Carrier`.
++ Adapted `textual.Parcel` to implement `textual.Carrier`.
++ Exposed a generic interface `textual.Carrier`, and refactored the processing stack.
++ Added `SyncApply`.
 + `textual.UTF8String` is now a symbolic string alias.
-+ [Textual.swift](helpers/swift/README.md) a Lightweight Swift utility to work with `textual` `Parcel` objects in iOS / macOS clients.
-+ [textual.js](helpers/js/README.md) a Lightweight ES6 utility to work with `textual` `Parcel` objects in the browser.
++ [Textual.swift](helpers/swift/README.md) a lightweight Swift utility to work with `textual` objects in native  clients.
++ [textual.js](helpers/js/README.md) a lightweight ES6 utility to work with `textual`  objects in the browser.
 
 # 2025-12-11 v1.0.0
-+ Original release of the textual go toolkit.
+
++ Original release of the textual Go toolkit.
 + [reverse words sample](examples/reverse_words/README.md)

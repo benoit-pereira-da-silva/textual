@@ -1,12 +1,13 @@
 # textual.js
 
-Lightweight ES6 utilities to work with `textual` `Result` objects in the browser.
+Lightweight ES6 utilities to work with `textual` **`Parcel`** objects in the browser.
 
 This module is the client-side JavaScript counterpart of the Go `textual`
-package. It focuses on **in-memory** manipulation of results:
+package. It focuses on **in-memory** manipulation of streamed values:
 
-- `Result.rawTexts()` – compute the non-transformed parts of a text.
-- `Result.render()` – merge transformed fragments and raw text back into a single string.
+- `Parcel.rawTexts()` – compute the non-transformed parts of a text.
+- `Parcel.render()` / `Parcel.utf8String()` – merge transformed fragments and raw text back into a single string.
+- A minimal `UTF8String` helper (mirrors Go’s `textual.String`) when you only need plain text + index + error.
 - Encoding helpers that mirror the Go `EncodingID` enum and `nameToEncoding` map.
 
 No transport is included: you plug this into whatever you use already
@@ -16,7 +17,7 @@ No transport is included: you plug this into whatever you use already
 
 - ✅ ES6 module, browser-first (no Node.js dependencies).
 - ✅ One-file utility, easy to drop into any frontend app.
-- ✅ API mirrors Go types: `Result`, `Fragment`, `RawText`.
+- ✅ API mirrors Go types: `Parcel`, `Fragment`, `RawText`, `UTF8String`.
 - ✅ `rawTexts()` and `render()` aligned with the Go implementation.
 - ✅ `EncodingID`, `EncodingNameToId`, `EncodingIdToCanonicalName`.
 - ✅ `parseEncoding(name)` and `encodingName(id)` helpers.
@@ -30,10 +31,10 @@ as an ES module.
 
 ```html
 <script type="module">
-  import { Result } from './textual.js';
+  import { Parcel, input } from './textual.js';
 
-  const res = new Result({ text: 'Hello, café' });
-  console.log(res.render());
+  const p = input('Hello, café');
+  console.log(p.render());
 </script>
 ```
 
@@ -44,15 +45,20 @@ your source tree and import it:
 
 ```js
 // src/app.js
-import { Result, input } from './textual.js';
+import { Parcel, input, UTF8String, utf8String } from './textual.js';
 
-const res = input('Hello, café');
-console.log(res.render());
+const p = input('Hello, café');
+console.log(p.render());
+
+const s = utf8String('plain text');
+console.log(s.utf8String());
 ```
 
 ## Data model
 
-The JS module mirrors the Go structs:
+The JS module mirrors the Go structs.
+
+### Parcel model (rich carrier)
 
 ```js
 // Fragment
@@ -73,8 +79,8 @@ class RawText {
   len;  // number
 }
 
-// Result
-class Result {
+// Parcel (Go: textual.Parcel)
+class Parcel {
   index;     // number (optional index in a stream)
   text;      // original text (UTF-8 string)
   fragments; // Fragment[]
@@ -82,16 +88,31 @@ class Result {
 }
 ```
 
-In practice you never need to instantiate these classes manually unless you
-want to – the utilities are designed to play nicely with JSON coming from
-your Go backend.
+`Parcel` is useful when your backend streams “partial transformations”
+(fragments, variants, confidence, raw segments…).
+
+### UTF8String model (minimal carrier)
+
+When you don’t need fragments/variants, you can use `UTF8String`, which mirrors
+Go’s minimal carrier `textual.String`:
+
+```js
+class UTF8String {
+  value; // string
+  index; // number
+  error; // string | null
+}
+```
+
+This helper intentionally stays simple: it’s meant to carry plain UTF‑8 text
+plus an optional ordering hint and a portable error string.
 
 ## RawTexts / Render
 
-You can feed `Result` either from your own code or from JSON coming from your Go backend.
+You can feed `Parcel` either from your own code or from JSON coming from your Go backend.
 
 ```js
-import { Result } from './textual.js';
+import { Parcel } from './textual.js';
 
 // From JSON (e.g. SSE payload)
 const json = {
@@ -101,33 +122,24 @@ const json = {
   ],
 };
 
-const res = Result.fromJSON(json);
+const p = Parcel.fromJSON(json);
 
 // Raw segments of the original text that are NOT covered by a fragment.
-const rawParts = res.rawTexts();  // -> RawText[]
+const rawParts = p.rawTexts();  // -> RawText[]
 
 // Final merged string: fragments + raw text, ordered by their positions.
-const rendered = res.render();    // -> "həˈloʊ, café"
+const rendered = p.render();    // -> "həˈloʊ, café"
 ```
 
-There is also a small convenience factory that mirrors the Go `Input` function:
+There is also a small convenience factory that mirrors the Go “create from text”
+pattern:
 
 ```js
 import { input } from './textual.js';
 
-const res = input('Plain text only');
-console.log(res.render());  // "Plain text only"
+const p = input('Plain text only');
+console.log(p.render());  // "Plain text only"
 ```
-
-### How RawTexts works (short version)
-
-- All positions/lengths are interpreted in **code points** (characters), not
-  UTF‑8 bytes.
-- Fragments are sorted and merged into a set of non-overlapping ranges.
-- Every gap between those ranges becomes a `RawText` segment.
-- This lets you reconstruct the final output by mixing:
-  - `Fragment.transformed`
-  - `RawText.text`
 
 ## Encoding dictionary
 
@@ -159,25 +171,25 @@ Here is how you might integrate this with Server-Sent Events (SSE). The
 transport itself is **not** part of this module; this is just an example.
 
 ```js
-import { Result } from './textual.js';
+import { Parcel } from './textual.js';
 
 const source = new EventSource('/textual/stream');
 
-source.addEventListener('result', (event) => {
+source.addEventListener('parcel', (event) => {
   try {
     const payload = JSON.parse(event.data);
-    const res = Result.fromJSON(payload);
+    const p = Parcel.fromJSON(payload);
 
     // 1. Inspect raw segments (for highlighting, for example).
-    const rawSegments = res.rawTexts();
+    const rawSegments = p.rawTexts();
 
     // 2. Render the final string.
-    const text = res.render();
+    const text = p.render();
 
     // 3. Do whatever you want with it (append to the DOM, etc.).
-    appendToUI(text, rawSegments);
+    appendToUI(text, rawSegments, p.error);
   } catch (err) {
-    console.error('Failed to handle textual result', err);
+    console.error('Failed to handle textual parcel', err);
   }
 });
 ```
