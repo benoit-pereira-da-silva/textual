@@ -18,7 +18,7 @@ import "context"
 
 // Processor is a chainable processing stage for a textual pipeline.
 //
-// The pipeline is generic over a carrier type S (see UTF8Stringer). A Processor
+// The pipeline is generic over a carrier type S (see Carrier). A Processor
 // reads a stream of S values from an input channel and produces a stream of S
 // values on its output channel.
 //
@@ -35,7 +35,7 @@ import "context"
 //
 // The returned channel must be non-nil. Callers are expected to consume from
 // the returned channel until it is closed.
-type Processor[S UTF8Stringer[S]] interface {
+type Processor[S Carrier[S]] interface {
 	// Apply starts the processing stage.
 	//
 	// The call should return quickly, typically after starting any necessary
@@ -69,7 +69,7 @@ type Processor[S UTF8Stringer[S]] interface {
 //	})
 //
 // This can make it easier to construct lightweight processors inline.
-type ProcessorFunc[S UTF8Stringer[S]] func(ctx context.Context, in <-chan S) <-chan S
+type ProcessorFunc[S Carrier[S]] func(ctx context.Context, in <-chan S) <-chan S
 
 // Apply calls f(ctx, in).
 func (f ProcessorFunc[S]) Apply(ctx context.Context, in <-chan S) <-chan S {

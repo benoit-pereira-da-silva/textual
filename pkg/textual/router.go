@@ -38,7 +38,7 @@ import (
 //	pred2 := func(ctx context.Context, s String) bool {
 //		return strings.HasPrefix(s.Value, "WARN")
 //	}
-type RoutePredicate[S UTF8Stringer[S]] func(ctx context.Context, item S) bool
+type RoutePredicate[S Carrier[S]] func(ctx context.Context, item S) bool
 
 // RoutingStrategy controls how the Router selects target routes among the ones
 // whose predicate matches.
@@ -65,7 +65,7 @@ const (
 
 // route is an internal configuration element combining a Processor and its
 // selection predicate.
-type route[S UTF8Stringer[S]] struct {
+type route[S Carrier[S]] struct {
 	processor Processor[S]
 	predicate RoutePredicate[S] // nil means "always eligible"
 }
@@ -90,7 +90,7 @@ type route[S UTF8Stringer[S]] struct {
 //
 // Note: AddRoute/AddProcessor/SetStrategy are not concurrency-safe; configure
 // the router during pipeline construction, before calling Apply.
-type Router[S UTF8Stringer[S]] struct {
+type Router[S Carrier[S]] struct {
 	routes   []route[S]
 	strategy RoutingStrategy
 
@@ -105,7 +105,7 @@ type Router[S UTF8Stringer[S]] struct {
 // routes with no predicate (always eligible). This is useful for simple
 // balancing setups (round-robin, random, broadcast) where routing does not
 // depend on the item content.
-func NewRouter[S UTF8Stringer[S]](strategy RoutingStrategy, processors ...Processor[S]) *Router[S] {
+func NewRouter[S Carrier[S]](strategy RoutingStrategy, processors ...Processor[S]) *Router[S] {
 	r := &Router[S]{
 		strategy: strategy,
 		rnd:      rand.New(rand.NewSource(time.Now().UnixNano())),

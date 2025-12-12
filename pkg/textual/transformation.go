@@ -23,12 +23,12 @@ import (
 // Transformation binds a Processor with information about the source and
 // destination textual "nature" (dialect + encoding).
 //
-// The processing stack is generic over a carrier type S (see UTF8Stringer).
+// The processing stack is generic over a carrier type S (see Carrier).
 // S represents what flows through the pipeline (for example String or Result).
 //
 // The generic type parameter P is the concrete Processor implementation that
 // transforms values of type S.
-type Transformation[S UTF8Stringer[S], P Processor[S]] struct {
+type Transformation[S Carrier[S], P Processor[S]] struct {
 	// Name is an arbitrary identifier for diagnostic / logging purposes.
 	Name string `json:"name"`
 
@@ -54,7 +54,7 @@ type Nature struct {
 
 // NewTransformation constructs a new Transformation instance binding a
 // processor with its input / output natures.
-func NewTransformation[S UTF8Stringer[S], P Processor[S]](name string, p P, from Nature, to Nature) *Transformation[S, P] {
+func NewTransformation[S Carrier[S], P Processor[S]](name string, p P, from Nature, to Nature) *Transformation[S, P] {
 	return &Transformation[S, P]{
 		Name:      name,
 		From:      from,

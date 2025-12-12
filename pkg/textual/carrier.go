@@ -23,10 +23,10 @@ package textual
 // readability.
 type UTF8String = string
 
-// UTF8Stringer is the “carrier” contract used by the generic pipeline.
+// Carrier is the “carrier” contract used by the generic pipeline.
 //
 // The stack (Processor, Chain, Router, IOReaderProcessor, Transformation, …)
-// is parameterized by a type S that implements UTF8Stringer[S].
+// is parameterized by a type S that implements Carrier[S].
 //
 // A carrier can be as small as a string wrapper (see textual.String) or a rich
 // structure that keeps track of partial transformations and alternatives (see
@@ -53,10 +53,12 @@ type UTF8String = string
 // Implementations should be cheap to copy (typically small structs). Pointer
 // receivers/types are supported, but methods must be safe to call on the zero
 // value (including nil pointers).
-type UTF8Stringer[S any] interface {
+type Carrier[S any] interface {
 	UTF8String() UTF8String
 	FromUTF8String(s UTF8String) S
 	WithIndex(index int) S
 	GetIndex() int
 	Aggregate(items []S) S
+	WithError(err error) S
+	GetError() error
 }

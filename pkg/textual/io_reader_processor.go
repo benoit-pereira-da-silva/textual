@@ -48,11 +48,11 @@ import (
 // processor and the scanner goroutine to exit promptly.
 //
 // The generic type parameter S is the carrier flowing through the pipeline (see
-// UTF8Stringer). P is the concrete processor type.
+// Carrier). P is the concrete processor type.
 //
 // Note: methods such as FromUTF8String are typically called on the zero value
 // of S, so implementations must not depend on receiver state.
-type IOReaderProcessor[S UTF8Stringer[S], P Processor[S]] struct {
+type IOReaderProcessor[S Carrier[S], P Processor[S]] struct {
 	reader    io.Reader
 	splitFunc bufio.SplitFunc // splitFunc defines the bufio.SplitFunc used to tokenize the input from the io.Reader.
 	processor P
@@ -67,7 +67,7 @@ type IOReaderProcessor[S UTF8Stringer[S], P Processor[S]] struct {
 // NewIOReaderProcessor constructs a new IOReaderProcessor using the provided
 // processor and reader. By default, it uses bufio.ScanLines as a split function
 // and a background context created on the first Start / StartWithTimeout.
-func NewIOReaderProcessor[S UTF8Stringer[S], P Processor[S]](processor P, reader io.Reader) *IOReaderProcessor[S, P] {
+func NewIOReaderProcessor[S Carrier[S], P Processor[S]](processor P, reader io.Reader) *IOReaderProcessor[S, P] {
 	return &IOReaderProcessor[S, P]{
 		splitFunc: bufio.ScanLines,
 		reader:    reader,

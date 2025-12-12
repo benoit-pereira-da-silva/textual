@@ -25,7 +25,7 @@ import "context"
 //   - N>1     : SyncApply aggregates them using S.Aggregate.
 //
 // Context cancellation is respected while reading the output channel.
-func SyncApply[S UTF8Stringer[S], P Processor[S]](ctx context.Context, p P, in S) S {
+func SyncApply[S Carrier[S], P Processor[S]](ctx context.Context, p P, in S) S {
 	if ctx == nil {
 		ctx = context.Background()
 	}

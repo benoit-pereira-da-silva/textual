@@ -15,11 +15,12 @@
 package textual
 
 import (
+	"errors"
 	"sort"
 	"strings"
 )
 
-// String is the minimal UTF8Stringer implementation.
+// String is the minimal Carrier implementation.
 //
 // It is useful when you only need to stream UTF-8 text through processors and
 // you don't need partial spans, variants, or per-token metadata beyond an
@@ -28,11 +29,12 @@ import (
 // Index is an ordering hint used by Aggregate (and by IOReaderProcessor, which
 // sets it to the token sequence number). Value carries the UTF-8 text.
 //
-// String implements UTF8Stringer[String] and can be used with the generic stack
+// String implements Carrier[String] and can be used with the generic stack
 // (Processor, Chain, Router, Transformation, ...).
 type String struct {
 	Value string
 	Index int
+	Error error
 }
 
 func (s String) UTF8String() UTF8String {
@@ -86,4 +88,20 @@ func (s String) Aggregate(stringers []String) String {
 	}
 
 	return String{Value: b.String(), Index: 0}
+}
+
+func (s String) WithError(err error) String {
+	if err == nil {
+		return s
+	}
+	if s.Error == nil {
+		s.Error = err
+	} else {
+		s.Error = errors.Join(s.Error, err)
+	}
+	return s
+}
+
+func (s String) GetError() error {
+	return s.Error
 }

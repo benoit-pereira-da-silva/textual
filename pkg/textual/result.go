@@ -15,11 +15,12 @@
 package textual
 
 import (
+	"errors"
 	"sort"
 	"strings"
 )
 
-// Result is a UTF8Stringer implementation designed for partial transformations.
+// Result is a Carrier implementation designed for partial transformations.
 //
 // It keeps the original input (`Text`) and a set of transformed spans
 // (`Fragments`). Each fragment references a rune-based range within `Text`
@@ -32,7 +33,7 @@ import (
 //   - need to keep per-span metadata (confidence, variant, ...), or
 //   - want to propagate errors while keeping the stream alive.
 //
-// Result implements UTF8Stringer[Result], which means it can flow through the
+// Result implements Carrier[Result], which means it can flow through the
 // generic stack (Processor, Chain, Router, Transformation, ...).
 //
 // Index is an optional ordering hint used by aggregators (e.g. when reassembling
@@ -196,6 +197,21 @@ func (r Result) Aggregate(results []Result) Result {
 	}
 	aggregated.Text = builder.String()
 	return aggregated
+}
+
+func (r Result) WithError(err error) Result {
+	if err == nil {
+		return r
+	}
+	if r.Error == nil {
+		r.Error = err
+	} else {
+		r.Error = errors.Join(r.Error, err)
+	}
+	return r
+}
+func (r Result) GetError() error {
+	return r.Error
 }
 
 /////////////////////////////////
