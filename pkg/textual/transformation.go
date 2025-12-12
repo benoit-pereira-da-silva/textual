@@ -26,7 +26,7 @@ import (
 // The generic type parameter P must satisfy the Processor interface. This
 // allows using any concrete Processor implementation while still carrying
 // static type information alongside the transformation metadata.
-type Transformation[P Processor] struct {
+type Transformation[S UTF8Stringer[S], P Processor[S]] struct {
 	// Name is an arbitrary identifier for diagnostic / logging purposes.
 	Name string `json:"name"`
 
@@ -52,8 +52,8 @@ type Nature struct {
 
 // NewTransformation constructs a new Transformation instance binding a
 // processor with its input / output natures.
-func NewTransformation[P Processor](name string, p P, from Nature, to Nature) *Transformation[P] {
-	return &Transformation[P]{
+func NewTransformation[S UTF8Stringer[S], P Processor[S]](name string, p P, from Nature, to Nature) *Transformation[S, P] {
+	return &Transformation[S, P]{
 		Name:      name,
 		From:      from,
 		To:        to,
@@ -61,11 +61,11 @@ func NewTransformation[P Processor](name string, p P, from Nature, to Nature) *T
 	}
 }
 
-// String returns a human‑readable description of the transformation,
+// Description returns a human‑readable description of the transformation,
 // including both dialect and encoding, in the form:
 //
 //	FromDialect(FromEncoding) -> ToDialect(ToEncoding)
-func (t Transformation[P]) String() string {
+func (t Transformation[S, P]) Description() string {
 	return fmt.Sprintf(
 		"%s(%s)->%s(%s)",
 		t.From.Dialect,
@@ -106,7 +106,7 @@ func (t Transformation[P]) String() string {
 //   - Process learns that no more output is coming when the Processor closes
 //     the output channel it returned from Apply. This is the canonical Go
 //     pattern: "closed channel == end of stream".
-func (t Transformation[P]) Process(ctx context.Context, r io.ReadCloser, w io.WriteCloser) error {
+func (t Transformation[S, P]) Process(ctx context.Context, r io.ReadCloser, w io.WriteCloser) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -128,8 +128,11 @@ func (t Transformation[P]) Process(ctx context.Context, r io.ReadCloser, w io.Wr
 	}
 
 	// Step 2: wire the processor.
-	in := make(chan Result)
+	in := make(chan S)
 	outCh := t.Processor.Apply(ctx, in)
+
+	proto := *new(S)
+	input := proto.FromUTF8String(original)
 
 	// Step 3: send a single Result and immediately close the input channel
 	// to signal end‑of‑input to the processor.
@@ -138,7 +141,7 @@ func (t Transformation[P]) Process(ctx context.Context, r io.ReadCloser, w io.Wr
 		// The context was canceled before we could send anything.
 		close(in)
 		return ctx.Err()
-	case in <- Input(original):
+	case in <- input:
 		// Input successfully sent.
 	}
 	close(in)
@@ -151,7 +154,7 @@ func (t Transformation[P]) Process(ctx context.Context, r io.ReadCloser, w io.Wr
 			// Context cancellation: stop forwarding results but keep draining
 			// the processor's output channel so that it does not block on
 			// sends.
-			go func(ch <-chan Result) {
+			go func(ch <-chan S) {
 				for range ch {
 				}
 			}(outCh)
@@ -165,7 +168,7 @@ func (t Transformation[P]) Process(ctx context.Context, r io.ReadCloser, w io.Wr
 				// Encoding error: cancel the processor and drain any remaining
 				// output so that it can terminate without blocking.
 				cancel()
-				go func(ch <-chan Result) {
+				go func(ch <-chan S) {
 					for range ch {
 					}
 				}(outCh)
@@ -180,7 +183,7 @@ func (t Transformation[P]) Process(ctx context.Context, r io.ReadCloser, w io.Wr
 //
 // DecodeText does NOT close r; Process is responsible for closing the
 // ReadCloser that it receives.
-func (t Transformation[P]) DecodeText(r io.ReadCloser) (UTF8String, error) {
+func (t Transformation[S, P]) DecodeText(r io.ReadCloser) (UTF8String, error) {
 	s, err := ReaderToUTF8(r, t.From.EncodingID)
 	if err != nil {
 		return "", err
@@ -193,8 +196,8 @@ func (t Transformation[P]) DecodeText(r io.ReadCloser) (UTF8String, error) {
 //
 // EncodeResult does NOT close w; Process owns the WriteCloser lifecycle.
 // Multiple calls to EncodeResult append sequentially to w.
-func (t Transformation[P]) EncodeResult(res Result, w io.WriteCloser) error {
+func (t Transformation[S, P]) EncodeResult(res S, w io.WriteCloser) error {
 	// Render the Result back into a plain UTF‑8 string.
-	text := res.Render()
+	text := res.UTF8String()
 	return FromUTF8ToWriter(text, t.To.EncodingID, w)
 }

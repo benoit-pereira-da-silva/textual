@@ -19,6 +19,15 @@ import (
 	"strings"
 )
 
+// Result implements the UTF8Stringer interface.
+// It can be used to handle complex textual transformation that may be incomplete.
+type Result struct {
+	Index     int        `json:"index,omitempty"` // the optional index in Results slice
+	Text      UTF8String `json:"text"`            // The original text in UTF8
+	Fragments []Fragment `json:"fragments"`       // The processed Fragment
+	Error     error      `json:"error,omitempty"` // an optional error
+}
+
 type Fragment struct {
 	Transformed UTF8String `json:"transformed"` // The transformed text may be in multiple dialect IPA, SAMPA, pseudo phonetics, ...
 	Pos         int        `json:"pos"`         // The first char position in the original text.
@@ -38,23 +47,123 @@ type RawText struct {
 	Len  int        `json:"len"`  // Its length
 }
 
-type Result struct {
-	Index     int        `json:"index,omitempty"` // the optional index in Results slice
-	Text      UTF8String `json:"text"`            // The original text in UTF8
-	Fragments []Fragment `json:"fragments"`       // The processed Fragment
-	Error     error      `json:"error,omitempty"` // an optional error
-}
-
-// Input a text to create a base Result to be used as a starting point by a processor.
-func Input(text UTF8String) Result {
-	input := Result{
+func (r Result) FromUTF8String(s UTF8String) Result {
+	return Result{
 		Index:     -1,
-		Text:      text,
+		Text:      s,
 		Fragments: make([]Fragment, 0),
 		Error:     nil,
 	}
-	return input
 }
+
+func (r Result) WithIndex(idx int) Result {
+	r.Index = idx
+	return r
+}
+
+func (r Result) GetIndex() int {
+	return r.Index
+}
+
+// UTF8String merges the phonetized fragments and the raw text segments back into
+// a single output string. The reconstruction follows the original positional
+// indices (Pos) to ensure the correct ordering.
+//
+// Rules for reconstruction:
+//   - Both fragments and raw texts reference absolute positions in the original string.
+//   - We collect all segments into a common list annotated with their start Pos.
+//   - Segments are sorted by Pos to restore the original sequence.
+//   - Fragment output uses Fragment.Phonetized.String().
+//   - RawText output uses RawText.Text.
+//   - No modification or transformation is done on the text content itself.
+func (r Result) UTF8String() UTF8String {
+	// A small struct to unify fragments and raw texts during reconstruction.
+	type segment struct {
+		pos  int
+		text UTF8String
+	}
+	rawTexts := r.RawTexts()
+	segments := make([]segment, 0, len(r.Fragments)+len(rawTexts))
+	lastFrag := Fragment{
+		Pos: -1,
+	}
+	// Convert all fragments to reconstruction segments.
+	for _, f := range r.Fragments {
+		if f.Pos != lastFrag.Pos {
+			// Phonetized.String() returns the human-readable representation of the phonetic form.
+			segments = append(segments, segment{
+				pos:  f.Pos,
+				text: f.Transformed,
+			})
+			lastFrag.Pos = f.Pos
+		}
+	}
+
+	// Convert all raw texts to reconstruction segments.
+	for _, raw := range rawTexts {
+		segments = append(segments, segment{
+			pos:  raw.Pos,
+			text: raw.Text,
+		})
+	}
+
+	// Sort by position to ensure correct ordering.
+	sort.Slice(segments, func(i, j int) bool {
+		return segments[i].pos < segments[j].pos
+	})
+
+	// Merge the ordered segments into the final output string.
+	// The segments are assumed to cover the whole relevant reconstructed output.
+	var out strings.Builder
+	for _, seg := range segments {
+		out.WriteString(string(seg.text))
+	}
+	return UTF8String(out.String())
+}
+
+// Aggregate concatenates the Text fields of results and rebases
+// all fragment positions into the coordinate space of the aggregated
+// Text. Errors are merged by taking the first non‑nil error.
+func (r Result) Aggregate(results []Result) Result {
+	var aggregated Result
+	if len(results) == 0 {
+		return aggregated
+	}
+	var builder strings.Builder
+
+	// Precompute capacity and first error, if any.
+	totalFragments := 0
+	for _, res := range results {
+		totalFragments += len(res.Fragments)
+		if aggregated.Error == nil && res.Error != nil {
+			aggregated.Error = res.Error
+		}
+	}
+	aggregated.Fragments = make([]Fragment, 0, totalFragments)
+	aggregated.Index = -1
+	offset := 0 // rune offset in the aggregated Text
+
+	for _, res := range results {
+		textStr := res.Text
+		builder.WriteString(textStr)
+
+		// Compute the rune length for offset rebasing.
+		runeLen := len([]rune(textStr))
+
+		for _, f := range res.Fragments {
+			adjusted := f
+			adjusted.Pos += offset
+			aggregated.Fragments = append(aggregated.Fragments, adjusted)
+		}
+		offset += runeLen
+	}
+	aggregated.Text = builder.String()
+	return aggregated
+}
+
+/////////////////////////////////
+//
+/////////////////////////////////
 
 // RawTexts computes the non‑transformed segments of the original Text.
 //
@@ -164,60 +273,4 @@ func (r Result) RawTexts() RawTexts {
 		})
 	}
 	return raw
-}
-
-// Render merges the phonetized fragments and the raw text segments back into
-// a single output string. The reconstruction follows the original positional
-// indices (Pos) to ensure the correct ordering.
-//
-// Rules for reconstruction:
-//   - Both fragments and raw texts reference absolute positions in the original string.
-//   - We collect all segments into a common list annotated with their start Pos.
-//   - Segments are sorted by Pos to restore the original sequence.
-//   - Fragment output uses Fragment.Phonetized.String().
-//   - RawText output uses RawText.Text.
-//   - No modification or transformation is done on the text content itself.
-func (r Result) Render() UTF8String {
-	// A small struct to unify fragments and raw texts during reconstruction.
-	type segment struct {
-		pos  int
-		text UTF8String
-	}
-	rawTexts := r.RawTexts()
-	segments := make([]segment, 0, len(r.Fragments)+len(rawTexts))
-	lastFrag := Fragment{
-		Pos: -1,
-	}
-	// Convert all fragments to reconstruction segments.
-	for _, f := range r.Fragments {
-		if f.Pos != lastFrag.Pos {
-			// Phonetized.String() returns the human-readable representation of the phonetic form.
-			segments = append(segments, segment{
-				pos:  f.Pos,
-				text: f.Transformed,
-			})
-			lastFrag.Pos = f.Pos
-		}
-	}
-
-	// Convert all raw texts to reconstruction segments.
-	for _, raw := range rawTexts {
-		segments = append(segments, segment{
-			pos:  raw.Pos,
-			text: raw.Text,
-		})
-	}
-
-	// Sort by position to ensure correct ordering.
-	sort.Slice(segments, func(i, j int) bool {
-		return segments[i].pos < segments[j].pos
-	})
-
-	// Merge the ordered segments into the final output string.
-	// The segments are assumed to cover the whole relevant reconstructed output.
-	var out strings.Builder
-	for _, seg := range segments {
-		out.WriteString(string(seg.text))
-	}
-	return UTF8String(out.String())
 }

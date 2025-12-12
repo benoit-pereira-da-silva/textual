@@ -35,7 +35,7 @@ import (
 // Start / StartWithTimeout spawn a goroutine that scans the input and feeds the
 // processor's input channel. Stop() cancels the context, which should cause the
 // processor and scanner goroutine to exit promptly.
-type IOReaderProcessor[P Processor] struct {
+type IOReaderProcessor[S UTF8Stringer[S], P Processor[S]] struct {
 	reader    io.Reader
 	splitFunc bufio.SplitFunc // splitFunc defines the bufio.SplitFunc used to tokenize the input from the io.Reader.
 	processor P
@@ -50,8 +50,8 @@ type IOReaderProcessor[P Processor] struct {
 // NewIOReaderProcessor constructs a new IOReaderProcessor using the provided
 // processor and reader. By default, it uses bufio.ScanLines as a split function
 // and a background context created on the first Start / StartWithTimeout.
-func NewIOReaderProcessor[P Processor](processor P, reader io.Reader) *IOReaderProcessor[P] {
-	return &IOReaderProcessor[P]{
+func NewIOReaderProcessor[S UTF8Stringer[S], P Processor[S]](processor P, reader io.Reader) *IOReaderProcessor[S, P] {
+	return &IOReaderProcessor[S, P]{
 		splitFunc: bufio.ScanLines,
 		reader:    reader,
 		processor: processor,
@@ -63,7 +63,7 @@ func NewIOReaderProcessor[P Processor](processor P, reader io.Reader) *IOReaderP
 // It must be called before Start / StartWithTimeout. The provided context is
 // wrapped in a cancellable child so that Stop() can terminate the processing
 // loop even if the parent context is still alive.
-func (p *IOReaderProcessor[P]) SetContext(ctx context.Context) {
+func (p *IOReaderProcessor[S, P]) SetContext(ctx context.Context) {
 	if ctx == nil {
 		// Avoid keeping a nil context internally; always fall back to Background.
 		ctx = context.Background()
@@ -75,7 +75,7 @@ func (p *IOReaderProcessor[P]) SetContext(ctx context.Context) {
 //
 // It must be called before Start / StartWithTimeout. If left unset, bufio.ScanLines
 // is used, which yields a token per line (without the trailing newline).
-func (p *IOReaderProcessor[P]) SetSplitFunc(splitFunc bufio.SplitFunc) {
+func (p *IOReaderProcessor[S, P]) SetSplitFunc(splitFunc bufio.SplitFunc) {
 	p.splitFunc = splitFunc
 }
 
@@ -84,7 +84,7 @@ func (p *IOReaderProcessor[P]) SetSplitFunc(splitFunc bufio.SplitFunc) {
 // When a context has been injected via SetContext, it is reused. If ctx is set
 // but cancel is nil (for instance, after manual field initialization), a
 // cancellable child context is derived so that Stop() can be used safely.
-func (p *IOReaderProcessor[P]) ensureContext() {
+func (p *IOReaderProcessor[S, P]) ensureContext() {
 	switch {
 	case p.ctx == nil && p.cancel == nil:
 		p.ctx, p.cancel = context.WithCancel(context.Background())
@@ -104,7 +104,7 @@ func (p *IOReaderProcessor[P]) ensureContext() {
 //
 // The underlying processor is expected to respect ctx and stop when it is done
 // or when ctx is canceled.
-func (p *IOReaderProcessor[P]) Start() <-chan Result {
+func (p *IOReaderProcessor[S, P]) Start() <-chan S {
 	p.ensureContext()
 
 	scanner := bufio.NewScanner(p.reader)
@@ -113,13 +113,14 @@ func (p *IOReaderProcessor[P]) Start() <-chan Result {
 	}
 
 	// Channel feeding the underlying processor.
-	in := make(chan Result)
+	in := make(chan S)
 
 	// Start the processor on the stream of Results.
 	out := p.processor.Apply(p.ctx, in)
 
 	// Goroutine responsible for scanning and feeding the input channel.
 	go func() {
+		prototype := *new(S)
 		defer close(in)
 
 		counter := 0
@@ -141,8 +142,7 @@ func (p *IOReaderProcessor[P]) Start() <-chan Result {
 			}
 
 			line := scanner.Text()
-			res := Input(UTF8String(line))
-			res.Index = counter
+			res := prototype.FromUTF8String(line).WithIndex(counter)
 			counter++
 
 			// Send the Result to the processor, remaining cancellable.
@@ -155,7 +155,6 @@ func (p *IOReaderProcessor[P]) Start() <-chan Result {
 			}
 		}
 	}()
-
 	return out
 }
 
@@ -163,7 +162,7 @@ func (p *IOReaderProcessor[P]) Start() <-chan Result {
 // the provided timeout elapses.
 //
 // If timeout <= 0, it simply delegates to Start without adding a timeout.
-func (p *IOReaderProcessor[P]) StartWithTimeout(timeout time.Duration) <-chan Result {
+func (p *IOReaderProcessor[S, P]) StartWithTimeout(timeout time.Duration) <-chan S {
 	if timeout <= 0 {
 		return p.Start()
 	}
@@ -182,7 +181,7 @@ func (p *IOReaderProcessor[P]) StartWithTimeout(timeout time.Duration) <-chan Re
 //
 // It is safe to call Stop even if Start / StartWithTimeout has not been
 // invoked yet; in that case it is a no-op.
-func (p *IOReaderProcessor[P]) Stop() {
+func (p *IOReaderProcessor[P, S]) Stop() {
 	if p.cancel != nil {
 		p.cancel()
 	}

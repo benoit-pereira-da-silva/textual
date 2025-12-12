@@ -20,7 +20,7 @@ The program wires together several building blocks from the `textual` package:
 
 1. **`ProcessorFunc`** – implements the *reverse words* transformation.
 
-   Each `Result` corresponds to one *token* of text (by default a line).
+   Each `textual.String` corresponds to one *token* of text (by default a line).
 
    For every token:
 
@@ -35,7 +35,7 @@ The program wires together several building blocks from the `textual` package:
 
 3. **`IOReaderProcessor`** – streams text from an `io.Reader` into the pipeline.
 
-   - By default, it uses `bufio.ScanLines`, so each `Result` is one line from
+   - By default, it uses `bufio.ScanLines`, so each `textual.String` is one line from
      `les_fleurs_du_mal.txt`.
    - When the `--word-by-word` flag is set, the example switches to
      `textual.ScanExpression`, a custom split function that yields *expressions*

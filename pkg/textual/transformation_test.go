@@ -53,7 +53,7 @@ func TestTransformationProcess_PassThrough(t *testing.T) {
 	wc := &trackingWriteCloser{}
 
 	// Echo processor: forwards every incoming Result as‑is.
-	echo := ProcessorFunc(func(ctx context.Context, in <-chan Result) <-chan Result {
+	echo := ProcessorFunc[Result](func(ctx context.Context, in <-chan Result) <-chan Result {
 		out := make(chan Result)
 		go func() {
 			defer close(out)
@@ -72,7 +72,7 @@ func TestTransformationProcess_PassThrough(t *testing.T) {
 		return out
 	})
 
-	tr := NewTransformation[Processor](
+	tr := NewTransformation[Result, Processor[Result]](
 		"echo",
 		echo,
 		Nature{Dialect: "plain", EncodingID: UTF8},
@@ -105,9 +105,10 @@ func TestTransformationProcess_MultipleResults(t *testing.T) {
 	wc := &trackingWriteCloser{}
 
 	// This processor splits the input Text into two Results and emits both.
-	splitting := ProcessorFunc(func(ctx context.Context, in <-chan Result) <-chan Result {
+	splitting := ProcessorFunc[Result](func(ctx context.Context, in <-chan Result) <-chan Result {
 		out := make(chan Result)
 		go func() {
+			instance := Result{}
 			defer close(out)
 			for {
 				select {
@@ -119,9 +120,8 @@ func TestTransformationProcess_MultipleResults(t *testing.T) {
 					}
 					text := string(res.Text)
 					mid := len(text) / 2
-					left := Input(UTF8String(text[:mid]))
-					right := Input(UTF8String(text[mid:]))
-
+					left := instance.FromUTF8String(text[:mid])
+					right := instance.FromUTF8String(text[mid:])
 					// Emit both Results.
 					select {
 					case <-ctx.Done():
@@ -139,7 +139,7 @@ func TestTransformationProcess_MultipleResults(t *testing.T) {
 		return out
 	})
 
-	tr := NewTransformation[Processor](
+	tr := NewTransformation[Result, Processor[Result]](
 		"split",
 		splitting,
 		Nature{Dialect: "plain", EncodingID: UTF8},

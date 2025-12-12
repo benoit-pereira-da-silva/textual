@@ -29,12 +29,12 @@ import (
 // }
 
 // Chain is a processor that chains multiple Processor.
-type Chain struct {
-	processors []Processor
+type Chain[S UTF8Stringer[S]] struct {
+	processors []Processor[S]
 }
 
-func NewChain(processors ...Processor) *Chain {
-	return &Chain{
+func NewChain[S UTF8Stringer[S]](processors ...Processor[S]) *Chain[S] {
+	return &Chain[S]{
 		processors: processors,
 	}
 }
@@ -48,7 +48,7 @@ func NewChain(processors ...Processor) *Chain {
 //
 // The same context is passed to every underlying processor; they are expected
 // to monitor ctx.Done() and stop when the context is canceled.
-func (c *Chain) Apply(ctx context.Context, in <-chan Result) <-chan Result {
+func (c *Chain[S]) Apply(ctx context.Context, in <-chan S) <-chan S {
 	out := in
 	for _, p := range c.processors {
 		if p == nil {

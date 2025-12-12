@@ -31,13 +31,13 @@ import "context"
 //
 // The returned channel must be non-nil. Callers are expected to consume
 // from the returned channel until it is closed.
-type Processor interface {
+type Processor[S UTF8Stringer[S]] interface {
 	// Apply starts the processing stage.
 	//
 	// The call should return quickly, typically after starting any
 	// necessary goroutines. Implementations should monitor ctx.Done()
 	// and abort processing when the context is canceled.
-	Apply(ctx context.Context, in <-chan Result) <-chan Result
+	Apply(ctx context.Context, in <-chan S) <-chan S
 }
 
 // ProcessorFunc is a function adapter that implements Processor.
@@ -65,9 +65,9 @@ type Processor interface {
 //	})
 //
 // This can make it easier to construct lightweight processors inline.
-type ProcessorFunc func(ctx context.Context, in <-chan Result) <-chan Result
+type ProcessorFunc[S UTF8Stringer[S]] func(ctx context.Context, in <-chan S) <-chan S
 
 // Apply calls f(ctx, in).
-func (f ProcessorFunc) Apply(ctx context.Context, in <-chan Result) <-chan Result {
+func (f ProcessorFunc[S]) Apply(ctx context.Context, in <-chan S) <-chan S {
 	return f(ctx, in)
 }

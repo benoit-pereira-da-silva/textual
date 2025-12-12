@@ -119,14 +119,12 @@ func main() {
 
 	for res := range out {
 		// Render the textual.Result back to a string and display it on stdout.
-		// Because the reverse-words processor updates Result.Text directly and
-		// does not add fragments, Render() simply returns the transformed text.
+		str := res.UTF8String()
 		if *wordByWord {
-			fmt.Print(res.Render())
+			fmt.Print(str)
 		} else {
-			fmt.Println(res.Render())
+			fmt.Println(str)
 		}
-
 	}
 }
 
@@ -135,15 +133,15 @@ func main() {
 // If twice is false, the returned Processor is a single reverse-words stage.
 // If twice is true, two reverse-words processors are chained with textual.Chain
 // so that words are reversed twice in a row (resulting in the original text).
-func buildProcessor(twice bool) textual.Processor {
+func buildProcessor(twice bool) textual.Processor[textual.String] {
 
 	// Seed a local random source used to add a small delay between each batch
 	// of transformed text.
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	// Single reverse-words stage implemented as a ProcessorFunc.
-	reverseStage := textual.ProcessorFunc(func(ctx context.Context, in <-chan textual.Result) <-chan textual.Result {
-		out := make(chan textual.Result)
+	reverseStage := textual.ProcessorFunc[textual.String](func(ctx context.Context, in <-chan textual.String) <-chan textual.String {
+		out := make(chan textual.String)
 
 		go func() {
 			defer close(out)
@@ -162,7 +160,7 @@ func buildProcessor(twice bool) textual.Processor {
 
 					// Transform the line by reversing each word while keeping
 					// punctuation and whitespace in place.
-					transformed := reverseWords(res.Text)
+					transformed := reverseWords(res.UTF8String())
 
 					// Wait for a random delay between 10ms and 100ms to simulate a
 					// streaming / progressive processing pipeline.
@@ -171,10 +169,7 @@ func buildProcessor(twice bool) textual.Processor {
 					time.Sleep(time.Duration(delay) * time.Millisecond)
 
 					// Create a new Result preserving the index and error fields.
-					outRes := res
-					outRes.Text = transformed
-					// We do not use fragments in this example, so we clear them.
-					outRes.Fragments = nil
+					outRes := res.FromUTF8String(transformed)
 
 					// Forward the transformed Result downstream, staying
 					// responsive to context cancellation.

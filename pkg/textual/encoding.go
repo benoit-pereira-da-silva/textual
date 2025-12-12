@@ -31,10 +31,6 @@ import (
 	"golang.org/x/text/transform"
 )
 
-// UTF8String is used for code expressivity.
-// We manipulate many encodings, but our internal string representation is always in utf8
-type UTF8String = string
-
 // EncodingID is an enum-like type for supported encodings.
 type EncodingID int
 
