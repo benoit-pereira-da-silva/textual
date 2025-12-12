@@ -98,7 +98,9 @@ func main() {
 	}()
 
 	// Build the reverse-words processor; optionally chain it twice.
-	processor := buildProcessor(*twice)
+	// We use a textual.String because a textual.Parcel is useless in this context.
+	//buildProcessor[textual.Parcel](*twice) works too.!
+	processor := buildProcessor[textual.String](*twice)
 
 	// Construct an IOReaderProcessor that will scan the file token-by-token and
 	// feed each token as a textual.String into the processor.
@@ -117,7 +119,7 @@ func main() {
 	out := ioProc.Start()
 
 	for res := range out {
-		// Render the textual.String back to a UTF-8 string and display it on stdout.
+		// Render the textual.Carrier back to a UTF-8 string and display it on stdout.
 		str := res.UTF8String()
 		if *wordByWord {
 			fmt.Print(str)
@@ -132,15 +134,15 @@ func main() {
 // If twice is false, the returned Processor is a single reverse-words stage.
 // If twice is true, two reverse-words processors are chained with textual.Chain
 // so that words are reversed twice in a row (resulting in the original text).
-func buildProcessor(twice bool) textual.Processor[textual.String] {
+func buildProcessor[S textual.Carrier[S]](twice bool) textual.Processor[S] {
 
 	// Seed a local random source used to add a small delay between each batch
 	// of transformed text.
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 	// Single reverse-words stage implemented as a ProcessorFunc.
-	reverseStage := textual.ProcessorFunc[textual.String](func(ctx context.Context, in <-chan textual.String) <-chan textual.String {
-		out := make(chan textual.String)
+	reverseStage := textual.ProcessorFunc[S](func(ctx context.Context, in <-chan S) <-chan S {
+		out := make(chan S)
 
 		go func() {
 			defer close(out)
@@ -294,5 +296,5 @@ func reverseWords(input textual.UTF8String) textual.UTF8String {
 		}
 	}
 
-	return textual.UTF8String(string(runes))
+	return textual.UTF8String(runes)
 }
