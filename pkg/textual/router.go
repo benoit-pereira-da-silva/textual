@@ -29,8 +29,8 @@ import (
 //
 // Examples:
 //
-//	// Route Result values that still have raw text.
-//	pred := func(ctx context.Context, res Result) bool {
+//	// Route Parcel values that still have raw text.
+//	pred := func(ctx context.Context, res Parcel) bool {
 //		return len(res.RawTexts()) > 0
 //	}
 //

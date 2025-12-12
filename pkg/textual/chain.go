@@ -29,7 +29,7 @@ import (
 //	out := ioProc.Start()
 //
 //	for item := range out {
-//		// Consume processed items of type S (for example String or Result).
+//		// Consume processed items of type S (for example String or Parcel).
 //		_ = item.UTF8String()
 //	}
 //

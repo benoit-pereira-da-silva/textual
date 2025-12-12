@@ -103,7 +103,7 @@ func main() {
 	processor := buildProcessor(*twice)
 
 	// Construct an IOReaderProcessor that will scan the file line-by-line and
-	// feed each line as a textual.Result into the processor.
+	// feed each line as a textual.Parcel into the processor.
 	ioProc := textual.NewIOReaderProcessor(processor, f)
 	if *wordByWord {
 		// We rep
@@ -118,7 +118,7 @@ func main() {
 	out := ioProc.Start()
 
 	for res := range out {
-		// Render the textual.Result back to a string and display it on stdout.
+		// Render the textual.Parcel back to a string and display it on stdout.
 		str := res.UTF8String()
 		if *wordByWord {
 			fmt.Print(str)
@@ -168,10 +168,10 @@ func buildProcessor(twice bool) textual.Processor[textual.String] {
 					delay := minDelayMS + rnd.Intn(delayRange)
 					time.Sleep(time.Duration(delay) * time.Millisecond)
 
-					// Create a new Result preserving the index and error fields.
+					// Create a new Parcel preserving the index and error fields.
 					outRes := res.FromUTF8String(transformed)
 
-					// Forward the transformed Result downstream, staying
+					// Forward the transformed Parcel downstream, staying
 					// responsive to context cancellation.
 					select {
 					case <-ctx.Done():

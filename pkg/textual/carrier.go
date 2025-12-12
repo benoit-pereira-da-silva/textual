@@ -30,7 +30,7 @@ type UTF8String = string
 //
 // A carrier can be as small as a string wrapper (see textual.String) or a rich
 // structure that keeps track of partial transformations and alternatives (see
-// textual.Result).
+// textual.Parcel).
 //
 // Method expectations:
 //

@@ -20,20 +20,20 @@ import (
 	"strings"
 )
 
-// Result is a Carrier implementation designed for partial transformations.
+// Parcel is a Carrier implementation designed for partial transformations.
 //
 // It keeps the original input (`Text`) and a set of transformed spans
 // (`Fragments`). Each fragment references a rune-based range within `Text`
 // using (Pos, Len). The remaining, unprocessed parts of `Text` can be derived
 // via RawTexts().
 //
-// Processors can use Result when they:
+// Processors can use Parcel when they:
 //
 //   - only transform some expressions inside a token,
 //   - need to keep per-span metadata (confidence, variant, ...), or
 //   - want to propagate errors while keeping the stream alive.
 //
-// Result implements Carrier[Result], which means it can flow through the
+// Parcel implements Carrier[Parcel], which means it can flow through the
 // generic stack (Processor, Chain, Router, Transformation, ...).
 //
 // Index is an optional ordering hint used by aggregators (e.g. when reassembling
@@ -42,19 +42,19 @@ import (
 // Note on variants:
 //
 // Multiple fragments can share the same Pos (for example different candidates
-// for the same span). Result.UTF8String() currently renders at most one fragment
+// for the same span). Parcel.UTF8String() currently renders at most one fragment
 // per Pos (the first encountered for that position). If you need to pick a
 // specific variant, filter / sort Fragments first.
-type Result struct {
+type Parcel struct {
 	Index     int        `json:"index,omitempty"` // Optional order in a stream (token index). -1 means unset.
 	Text      UTF8String `json:"text"`            // Original text (UTF-8).
 	Fragments []Fragment `json:"fragments"`       // Transformed spans within Text.
 	Error     error      `json:"error,omitempty"` // Optional processing error.
 }
 
-// Fragment describes a transformed span inside a Result.
+// Fragment describes a transformed span inside a Parcel.
 //
-// Pos and Len are expressed in runes (character indices) relative to Result.Text.
+// Pos and Len are expressed in runes (character indices) relative to Parcel.Text.
 // This makes them stable for UTF-8 text.
 //
 // Variant can be used to represent multiple candidates for the same span
@@ -69,23 +69,23 @@ type Fragment struct {
 	Variant     int        `json:"variant"`     // Variant number when offering multiple candidates.
 }
 
-// RawTexts is a set of raw (non-transformed) segments derived from a Result.
+// RawTexts is a set of raw (non-transformed) segments derived from a Parcel.
 //
-// It is computed by subtracting fragment ranges from Result.Text. See RawTexts()
+// It is computed by subtracting fragment ranges from Parcel.Text. See RawTexts()
 // for details.
 type RawTexts []RawText
 
 // RawText is a remaining (non-transformed) segment of the original text.
 //
-// Pos and Len are expressed in runes (character indices) relative to Result.Text.
+// Pos and Len are expressed in runes (character indices) relative to Parcel.Text.
 type RawText struct {
 	Text UTF8String `json:"text"` // Remaining raw text.
 	Pos  int        `json:"pos"`  // Start position (rune index) in the original text.
 	Len  int        `json:"len"`  // Length (in runes).
 }
 
-func (r Result) FromUTF8String(s UTF8String) Result {
-	return Result{
+func (r Parcel) FromUTF8String(s UTF8String) Parcel {
+	return Parcel{
 		Index:     -1,
 		Text:      s,
 		Fragments: make([]Fragment, 0),
@@ -93,12 +93,12 @@ func (r Result) FromUTF8String(s UTF8String) Result {
 	}
 }
 
-func (r Result) WithIndex(idx int) Result {
+func (r Parcel) WithIndex(idx int) Parcel {
 	r.Index = idx
 	return r
 }
 
-func (r Result) GetIndex() int {
+func (r Parcel) GetIndex() int {
 	return r.Index
 }
 
@@ -115,7 +115,7 @@ func (r Result) GetIndex() int {
 //   - RawText output uses RawText.Text.
 //
 // No additional transformation is performed: this is only a positional merge.
-func (r Result) UTF8String() UTF8String {
+func (r Parcel) UTF8String() UTF8String {
 	// A small struct to unify fragments and raw texts during reconstruction.
 	type segment struct {
 		pos  int
@@ -162,8 +162,8 @@ func (r Result) UTF8String() UTF8String {
 // positions into the coordinate space of the aggregated Text.
 //
 // Errors are merged by taking the first non-nil error.
-func (r Result) Aggregate(results []Result) Result {
-	var aggregated Result
+func (r Parcel) Aggregate(results []Parcel) Parcel {
+	var aggregated Parcel
 	if len(results) == 0 {
 		return aggregated
 	}
@@ -199,7 +199,7 @@ func (r Result) Aggregate(results []Result) Result {
 	return aggregated
 }
 
-func (r Result) WithError(err error) Result {
+func (r Parcel) WithError(err error) Parcel {
 	if err == nil {
 		return r
 	}
@@ -210,7 +210,7 @@ func (r Result) WithError(err error) Result {
 	}
 	return r
 }
-func (r Result) GetError() error {
+func (r Parcel) GetError() error {
 	return r.Error
 }
 
@@ -238,7 +238,7 @@ func (r Result) GetError() error {
 //
 // The resulting slice is suitable for UTF8String(), which interleaves
 // transformed fragments with these raw segments to reconstruct an output string.
-func (r Result) RawTexts() RawTexts {
+func (r Parcel) RawTexts() RawTexts {
 	raw := make(RawTexts, 0)
 	// Work in rune space so that positions and lengths are expressed in
 	// characters (not bytes) for UTF-8 text.

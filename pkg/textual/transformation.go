@@ -24,7 +24,7 @@ import (
 // destination textual "nature" (dialect + encoding).
 //
 // The processing stack is generic over a carrier type S (see Carrier).
-// S represents what flows through the pipeline (for example String or Result).
+// S represents what flows through the pipeline (for example String or Parcel).
 //
 // The generic type parameter P is the concrete Processor implementation that
 // transforms values of type S.

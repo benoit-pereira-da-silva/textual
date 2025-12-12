@@ -43,7 +43,7 @@ func (w *trackingWriteCloser) Close() error {
 }
 
 // TestTransformationProcess_PassThrough verifies that a simple echo Processor
-// receives a single input Result, produces a single output Result, and that
+// receives a single input Parcel, produces a single output Parcel, and that
 // Process encodes / writes that result and closes both reader and writer.
 func TestTransformationProcess_PassThrough(t *testing.T) {
 	// Original string, encoded as UTF‑8 for simplicity.
@@ -52,9 +52,9 @@ func TestTransformationProcess_PassThrough(t *testing.T) {
 	rc := &trackingReadCloser{Reader: bytes.NewReader([]byte(original))}
 	wc := &trackingWriteCloser{}
 
-	// Echo processor: forwards every incoming Result as‑is.
-	echo := ProcessorFunc[Result](func(ctx context.Context, in <-chan Result) <-chan Result {
-		out := make(chan Result)
+	// Echo processor: forwards every incoming Parcel as‑is.
+	echo := ProcessorFunc[Parcel](func(ctx context.Context, in <-chan Parcel) <-chan Parcel {
+		out := make(chan Parcel)
 		go func() {
 			defer close(out)
 			for {
@@ -72,7 +72,7 @@ func TestTransformationProcess_PassThrough(t *testing.T) {
 		return out
 	})
 
-	tr := NewTransformation[Result, Processor[Result]](
+	tr := NewTransformation[Parcel, Processor[Parcel]](
 		"echo",
 		echo,
 		Nature{Dialect: "plain", EncodingID: UTF8},
@@ -97,7 +97,7 @@ func TestTransformationProcess_PassThrough(t *testing.T) {
 }
 
 // TestTransformationProcess_MultipleResults ensures that Process drains the
-// processor's output channel until it is closed, not just a single Result.
+// processor's output channel until it is closed, not just a single Parcel.
 func TestTransformationProcess_MultipleResults(t *testing.T) {
 	const original = "ABCDEFGHIJ"
 
@@ -105,10 +105,10 @@ func TestTransformationProcess_MultipleResults(t *testing.T) {
 	wc := &trackingWriteCloser{}
 
 	// This processor splits the input Text into two Results and emits both.
-	splitting := ProcessorFunc[Result](func(ctx context.Context, in <-chan Result) <-chan Result {
-		out := make(chan Result)
+	splitting := ProcessorFunc[Parcel](func(ctx context.Context, in <-chan Parcel) <-chan Parcel {
+		out := make(chan Parcel)
 		go func() {
-			instance := Result{}
+			instance := Parcel{}
 			defer close(out)
 			for {
 				select {
@@ -139,7 +139,7 @@ func TestTransformationProcess_MultipleResults(t *testing.T) {
 		return out
 	})
 
-	tr := NewTransformation[Result, Processor[Result]](
+	tr := NewTransformation[Parcel, Processor[Parcel]](
 		"split",
 		splitting,
 		Nature{Dialect: "plain", EncodingID: UTF8},
