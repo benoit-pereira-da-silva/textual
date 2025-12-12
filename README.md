@@ -1,4 +1,6 @@
-# textual 🚀
+# textual
+
+![](assets/logo.png)
 
 `textual` is a small Go toolkit for building **streaming** text-processing pipelines.
 
@@ -11,6 +13,9 @@ It focuses on:
 - **Error propagation**: processors can attach non-fatal, per-item errors to the flowing values without breaking the stream.
 
 The library is used by higher-level projects like Tipa, but it can be used standalone in any Go program that needs robust incremental text processing.
+
+
+
 
 ---
 
