@@ -19,32 +19,68 @@ import (
 	"strings"
 )
 
-// Result implements the UTF8Stringer interface.
-// It can be used to handle complex textual transformation that may be incomplete.
+// Result is a UTF8Stringer implementation designed for partial transformations.
+//
+// It keeps the original input (`Text`) and a set of transformed spans
+// (`Fragments`). Each fragment references a rune-based range within `Text`
+// using (Pos, Len). The remaining, unprocessed parts of `Text` can be derived
+// via RawTexts().
+//
+// Processors can use Result when they:
+//
+//   - only transform some expressions inside a token,
+//   - need to keep per-span metadata (confidence, variant, ...), or
+//   - want to propagate errors while keeping the stream alive.
+//
+// Result implements UTF8Stringer[Result], which means it can flow through the
+// generic stack (Processor, Chain, Router, Transformation, ...).
+//
+// Index is an optional ordering hint used by aggregators (e.g. when reassembling
+// split outputs). A value of -1 typically means "unset".
+//
+// Note on variants:
+//
+// Multiple fragments can share the same Pos (for example different candidates
+// for the same span). Result.UTF8String() currently renders at most one fragment
+// per Pos (the first encountered for that position). If you need to pick a
+// specific variant, filter / sort Fragments first.
 type Result struct {
-	Index     int        `json:"index,omitempty"` // the optional index in Results slice
-	Text      UTF8String `json:"text"`            // The original text in UTF8
-	Fragments []Fragment `json:"fragments"`       // The processed Fragment
-	Error     error      `json:"error,omitempty"` // an optional error
+	Index     int        `json:"index,omitempty"` // Optional order in a stream (token index). -1 means unset.
+	Text      UTF8String `json:"text"`            // Original text (UTF-8).
+	Fragments []Fragment `json:"fragments"`       // Transformed spans within Text.
+	Error     error      `json:"error,omitempty"` // Optional processing error.
 }
 
+// Fragment describes a transformed span inside a Result.
+//
+// Pos and Len are expressed in runes (character indices) relative to Result.Text.
+// This makes them stable for UTF-8 text.
+//
+// Variant can be used to represent multiple candidates for the same span
+// (e.g. alternative phonetic renderings).
+// Confidence is an arbitrary score (0..1 by convention) produced by the
+// processor.
 type Fragment struct {
-	Transformed UTF8String `json:"transformed"` // The transformed text may be in multiple dialect IPA, SAMPA, pseudo phonetics, ...
-	Pos         int        `json:"pos"`         // The first char position in the original text.
-	Len         int        `json:"len"`         // The len of the expression in the original text
-	Confidence  float64    `json:"confidence"`  // The confidence of the result.
-	Variant     int        `json:"variant"`     // A variant number when offering multiple candidates.
+	Transformed UTF8String `json:"transformed"` // Transformed text (dialect-specific: IPA, SAMPA, pseudo phonetics, ...).
+	Pos         int        `json:"pos"`         // Start position (rune index) in the original text.
+	Len         int        `json:"len"`         // Length (in runes) of the original span.
+	Confidence  float64    `json:"confidence"`  // Confidence score.
+	Variant     int        `json:"variant"`     // Variant number when offering multiple candidates.
 }
 
-// RawTexts is a slice of RawTexts
-// It is computed on a Result.
-// It represents the parts that have not been processed.
+// RawTexts is a set of raw (non-transformed) segments derived from a Result.
+//
+// It is computed by subtracting fragment ranges from Result.Text. See RawTexts()
+// for details.
 type RawTexts []RawText
 
+// RawText is a remaining (non-transformed) segment of the original text.
+//
+// Pos and Len are expressed in runes (character indices) relative to Result.Text.
 type RawText struct {
-	Text UTF8String `json:"text"` // The remaining raw text.
-	Pos  int        `json:"pos"`  // Its position in the original text
-	Len  int        `json:"len"`  // Its length
+	Text UTF8String `json:"text"` // Remaining raw text.
+	Pos  int        `json:"pos"`  // Start position (rune index) in the original text.
+	Len  int        `json:"len"`  // Length (in runes).
 }
 
 func (r Result) FromUTF8String(s UTF8String) Result {
@@ -65,17 +101,19 @@ func (r Result) GetIndex() int {
 	return r.Index
 }
 
-// UTF8String merges the phonetized fragments and the raw text segments back into
-// a single output string. The reconstruction follows the original positional
-// indices (Pos) to ensure the correct ordering.
+// UTF8String reconstructs a plain string by interleaving transformed fragments
+// and raw text segments.
 //
-// Rules for reconstruction:
-//   - Both fragments and raw texts reference absolute positions in the original string.
-//   - We collect all segments into a common list annotated with their start Pos.
+// Reconstruction rules:
+//   - Both fragments and raw texts reference absolute rune positions in the
+//     original string.
+//   - All segments are collected into a common list annotated with their start
+//     Pos.
 //   - Segments are sorted by Pos to restore the original sequence.
-//   - Fragment output uses Fragment.Phonetized.String().
+//   - Fragment output uses Fragment.Transformed.
 //   - RawText output uses RawText.Text.
-//   - No modification or transformation is done on the text content itself.
+//
+// No additional transformation is performed: this is only a positional merge.
 func (r Result) UTF8String() UTF8String {
 	// A small struct to unify fragments and raw texts during reconstruction.
 	type segment struct {
@@ -87,10 +125,9 @@ func (r Result) UTF8String() UTF8String {
 	lastFrag := Fragment{
 		Pos: -1,
 	}
-	// Convert all fragments to reconstruction segments.
+	// Convert fragments to reconstruction segments.
 	for _, f := range r.Fragments {
 		if f.Pos != lastFrag.Pos {
-			// Phonetized.String() returns the human-readable representation of the phonetic form.
 			segments = append(segments, segment{
 				pos:  f.Pos,
 				text: f.Transformed,
@@ -99,7 +136,7 @@ func (r Result) UTF8String() UTF8String {
 		}
 	}
 
-	// Convert all raw texts to reconstruction segments.
+	// Convert raw texts to reconstruction segments.
 	for _, raw := range rawTexts {
 		segments = append(segments, segment{
 			pos:  raw.Pos,
@@ -113,7 +150,6 @@ func (r Result) UTF8String() UTF8String {
 	})
 
 	// Merge the ordered segments into the final output string.
-	// The segments are assumed to cover the whole relevant reconstructed output.
 	var out strings.Builder
 	for _, seg := range segments {
 		out.WriteString(string(seg.text))
@@ -121,9 +157,10 @@ func (r Result) UTF8String() UTF8String {
 	return UTF8String(out.String())
 }
 
-// Aggregate concatenates the Text fields of results and rebases
-// all fragment positions into the coordinate space of the aggregated
-// Text. Errors are merged by taking the first non‑nil error.
+// Aggregate concatenates the Text fields of results and rebases all fragment
+// positions into the coordinate space of the aggregated Text.
+//
+// Errors are merged by taking the first non-nil error.
 func (r Result) Aggregate(results []Result) Result {
 	var aggregated Result
 	if len(results) == 0 {
@@ -163,32 +200,32 @@ func (r Result) Aggregate(results []Result) Result {
 
 /////////////////////////////////
 //
+//
 /////////////////////////////////
 
-// RawTexts computes the non‑transformed segments of the original Text.
+// RawTexts computes the non-transformed segments of the original Text.
 //
-// Fragments are considered as ranges within the original Text identified by
-// Fragment.Pos and Fragment.Len (character coordinates, in the same space as
-// RawText.Pos and RawText.Len). RawTexts walks over the Text and returns every
+// Fragments are treated as rune ranges within the original Text identified by
+// Fragment.Pos and Fragment.Len. RawTexts walks over the Text and returns every
 // contiguous region not covered by any fragment.
 //
 // Behavior and assumptions:
 //
 //   - If there are no fragments, a single RawText covering the whole Text is returned.
-//   - Fragments are copied, sorted by their Pos, and treated as a union of ranges.
+//   - Fragments are copied, sorted by Pos, and treated as a union of ranges.
 //     Overlapping fragments or multiple variants at the same Pos are merged by
 //     always advancing a cursor to the furthest end seen so far.
-//   - Zero‑length fragments and fragments that fall completely outside the Text
+//   - Zero-length fragments and fragments that fall completely outside the Text
 //     are ignored.
-//   - Out‑of‑range fragment bounds are clamped to [0, len(TextInRunes)] so that
+//   - Out-of-range fragment bounds are clamped to [0, len(TextInRunes)] so that
 //     RawTexts never panics even if the fragment coordinates are slightly off.
 //
-// The resulting slice is suitable for Render(), which interleaves transformed
-// fragments with these RawText segments to reconstruct an output string.
+// The resulting slice is suitable for UTF8String(), which interleaves
+// transformed fragments with these raw segments to reconstruct an output string.
 func (r Result) RawTexts() RawTexts {
 	raw := make(RawTexts, 0)
 	// Work in rune space so that positions and lengths are expressed in
-	// characters (not bytes) for UTF‑8 text.
+	// characters (not bytes) for UTF-8 text.
 	runes := []rune(string(r.Text))
 	textLen := len(runes)
 
@@ -214,7 +251,7 @@ func (r Result) RawTexts() RawTexts {
 
 	sort.Slice(fragments, func(i, j int) bool {
 		if fragments[i].Pos == fragments[j].Pos {
-			// Tie‑break on length to provide a stable ordering; the actual
+			// Tie-break on length to provide a stable ordering; the actual
 			// value has no semantic impact because we merge ranges via the
 			// cursor logic below.
 			return fragments[i].Len < fragments[j].Len

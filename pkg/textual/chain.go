@@ -18,17 +18,25 @@ import (
 	"context"
 )
 
-// Usage sample:
-// chain := NewChain(procA, procB, procC)
+// Chain is a Processor that runs multiple processors sequentially.
 //
-// ioProc = NewIOReaderProcessor[Processor](chain, reader)
-// ioProc.SetContext(ctx)
-// out := ioProc.Start()
-// for r := range out {
-//    // consume processed results
-// }
-
-// Chain is a processor that chains multiple Processor.
+// Usage example:
+//
+//	chain := NewChain(procA, procB, procC)
+//
+//	ioProc := NewIOReaderProcessor(chain, reader)
+//	ioProc.SetContext(ctx) // optional
+//	out := ioProc.Start()
+//
+//	for item := range out {
+//		// Consume processed items of type S (for example String or Result).
+//		_ = item.UTF8String()
+//	}
+//
+// Nil processors are ignored.
+//
+// See also: Router for fan-out/fan-in routing and SyncApply for one-shot
+// processing.
 type Chain[S UTF8Stringer[S]] struct {
 	processors []Processor[S]
 }

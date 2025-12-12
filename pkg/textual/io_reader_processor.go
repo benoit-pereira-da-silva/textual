@@ -21,8 +21,19 @@ import (
 	"time"
 )
 
-// IOReaderProcessor calls a processor progressively on slices coming from an io.Reader.
-// The slices are split by a bufio.SplitFunc (by default bufio.ScanLines).
+// IOReaderProcessor connects an io.Reader to a Processor by scanning the input
+// stream into tokens.
+//
+// Tokenization is controlled by a bufio.SplitFunc (default: bufio.ScanLines).
+// Each token is converted into the carrier type S via:
+//
+//	prototype.FromUTF8String(token).WithIndex(i)
+//
+// where prototype is the zero value of S and i is the token sequence number.
+//
+// Important: the scanner yields bytes as-is. IOReaderProcessor assumes those
+// bytes represent UTF-8 text. If your source encoding is not UTF‑8, decode the
+// reader first (for example with NewUTF8Reader) before plugging it here.
 //
 // Usage pattern:
 //
@@ -30,11 +41,17 @@ import (
 //	p.SetContext(ctx)      // optional, must be called before Start / StartWithTimeout
 //	p.SetSplitFunc(...)    // optional, must be called before Start / StartWithTimeout
 //	out := p.Start()       // or p.StartWithTimeout(...)
-//	for res := range out { /* consume results */ }
+//	for item := range out { /* consume results */ }
 //
 // Start / StartWithTimeout spawn a goroutine that scans the input and feeds the
-// processor's input channel. Stop() cancels the context, which should cause the
-// processor and scanner goroutine to exit promptly.
+// processor's input channel. Stop cancels the context, which should cause the
+// processor and the scanner goroutine to exit promptly.
+//
+// The generic type parameter S is the carrier flowing through the pipeline (see
+// UTF8Stringer). P is the concrete processor type.
+//
+// Note: methods such as FromUTF8String are typically called on the zero value
+// of S, so implementations must not depend on receiver state.
 type IOReaderProcessor[S UTF8Stringer[S], P Processor[S]] struct {
 	reader    io.Reader
 	splitFunc bufio.SplitFunc // splitFunc defines the bufio.SplitFunc used to tokenize the input from the io.Reader.
@@ -61,7 +78,7 @@ func NewIOReaderProcessor[S UTF8Stringer[S], P Processor[S]](processor P, reader
 // SetContext sets the base context used by Start / StartWithTimeout.
 //
 // It must be called before Start / StartWithTimeout. The provided context is
-// wrapped in a cancellable child so that Stop() can terminate the processing
+// wrapped in a cancellable child so that Stop can terminate the processing
 // loop even if the parent context is still alive.
 func (p *IOReaderProcessor[S, P]) SetContext(ctx context.Context) {
 	if ctx == nil {
@@ -83,7 +100,7 @@ func (p *IOReaderProcessor[S, P]) SetSplitFunc(splitFunc bufio.SplitFunc) {
 //
 // When a context has been injected via SetContext, it is reused. If ctx is set
 // but cancel is nil (for instance, after manual field initialization), a
-// cancellable child context is derived so that Stop() can be used safely.
+// cancellable child context is derived so that Stop can be used safely.
 func (p *IOReaderProcessor[S, P]) ensureContext() {
 	switch {
 	case p.ctx == nil && p.cancel == nil:
@@ -93,10 +110,9 @@ func (p *IOReaderProcessor[S, P]) ensureContext() {
 	}
 }
 
-// Start reads from p.reader using a bufio.Scanner, splits, according to
-// splitFunc, turns each token into a Result, and sends it into the processor's
-// input channel. It returns the output channel produced by the underlying
-// processor.
+// Start reads from p.reader using a bufio.Scanner, splits according to
+// splitFunc, converts each scanned token into an S, and sends it into the
+// underlying processor.
 //
 // Scanning stops as soon as:
 //   - scanner.Scan() returns false (EOF or error), or
@@ -115,7 +131,7 @@ func (p *IOReaderProcessor[S, P]) Start() <-chan S {
 	// Channel feeding the underlying processor.
 	in := make(chan S)
 
-	// Start the processor on the stream of Results.
+	// Start the processor on the stream of S values.
 	out := p.processor.Apply(p.ctx, in)
 
 	// Goroutine responsible for scanning and feeding the input channel.
@@ -141,16 +157,16 @@ func (p *IOReaderProcessor[S, P]) Start() <-chan S {
 				return
 			}
 
-			line := scanner.Text()
-			res := prototype.FromUTF8String(line).WithIndex(counter)
+			text := scanner.Text()
+			item := prototype.FromUTF8String(text).WithIndex(counter)
 			counter++
 
-			// Send the Result to the processor, remaining cancellable.
+			// Send the value to the processor, remaining cancellable.
 			select {
 			case <-p.ctx.Done():
 				// Context canceled while we were trying to send.
 				return
-			case in <- res:
+			case in <- item:
 				// Successfully sent to processor.
 			}
 		}
@@ -181,7 +197,7 @@ func (p *IOReaderProcessor[S, P]) StartWithTimeout(timeout time.Duration) <-chan
 //
 // It is safe to call Stop even if Start / StartWithTimeout has not been
 // invoked yet; in that case it is a no-op.
-func (p *IOReaderProcessor[P, S]) Stop() {
+func (p *IOReaderProcessor[S, P]) Stop() {
 	if p.cancel != nil {
 		p.cancel()
 	}

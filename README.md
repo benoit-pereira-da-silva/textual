@@ -1,29 +1,25 @@
 # textual
 
-`textual` is a small Go toolkit for building streaming text-processing
-pipelines.
+`textual` is a small Go toolkit for building **streaming** text-processing pipelines.
 
 It focuses on:
 
-- **Streaming** – process text progressively as it arrives.
-- **Composition** – chain and route processing stages.
-- **Encodings** – read and write many character encodings while keeping an
-  internal UTF‑8 representation.
-- **Transformations** – describe end‑to‑end text conversions with metadata.
+- **Streaming**: process text progressively as it arrives (readers, sockets, pipes, scanners…).
+- **Composition**: chain stages, route items to multiple stages, merge results.
+- **Encodings**: read/write many encodings while keeping an internal UTF‑8 representation.
+- **Metadata-friendly**: pipelines are **generic** and can carry either plain strings or richer “result” objects.
 
-The library is used by higher‑level projects like [Tipa](https://github.com/temporal-IPA/tipa/) but can be
-used standalone in any Go program that needs robust, incremental text
-processing.
+The library is used by higher-level projects like Tipa, but it can be used standalone in any Go program that needs robust incremental text processing.
 
 ---
 
 ## Installation
 
-```shell
+```bash
 go get github.com/benoit-pereira-da-silva/textual
 ```
 
-In code, import the core package:
+Import the core package:
 
 ```go
 import textual "github.com/benoit-pereira-da-silva/textual/pkg/textual"
@@ -31,165 +27,206 @@ import textual "github.com/benoit-pereira-da-silva/textual/pkg/textual"
 
 ---
 
-## Core concepts
+## The generic model
 
-### UTF8String and Result
+### UTF8String
 
-All internal text is represented as UTF‑8 via the `UTF8String` type:
+Internally, `textual` represents text as UTF‑8.
 
 ```go
-type UTF8String string
+type UTF8String = string
 ```
 
-A `Result` is the unit that flows through a pipeline:
+It’s an alias (not a distinct type) used for expressivity: you may decode from other encodings at the edges, but once inside the pipeline everything is treated as UTF‑8.
+
+### UTF8Stringer
+
+Pipelines don’t hard-code a single “message” type anymore. Instead, stages are generic over a carrier type `S` that implements `UTF8Stringer[S]`:
 
 ```go
-type Result struct {
-    Index     int        // optional index in a stream
-    Text      UTF8String // original or transformed text
-    Fragments []Fragment // processed sub-parts (e.g. phonetic forms)
-    Error     error      // optional error
+type UTF8Stringer[S any] interface {
+    UTF8String() UTF8String
+    FromUTF8String(s UTF8String) S
+    WithIndex(index int) S
+    GetIndex() int
+    Aggregate(items []S) S
 }
 ```
 
-`Result.Render()` recombines transformed fragments and untouched “raw” text
-into a final string.
+This interface lets `textual`:
+
+- build a value from a scanned token (`FromUTF8String`),
+- attach ordering metadata (`WithIndex` / `GetIndex`),
+- re-compose multiple outputs back into one (`Aggregate`),
+- render any value back to UTF‑8 (`UTF8String`).
+
+Built-in implementations:
+
+- `textual.String`: minimal carrier (just a `string` + `Index`).
+- `textual.Result`: richer carrier for partial processing (fragments, variants, confidence, raw segments…).
+
+You can implement your own carrier type if you want to keep extra metadata flowing through the pipeline.
+
+### Built-in carriers
+
+#### `textual.String` (minimal)
+
+Use `textual.String` when you just want a streaming string pipeline:
+
+- `Value` carries the UTF‑8 text.
+- `Index` is optional ordering metadata (for stable aggregation).
+
+It’s the simplest way to build processors that transform tokens and emit tokens.
+
+#### `textual.Result` (partial transformations + variants)
+
+Use `textual.Result` when a processor might only transform *parts* of the input, or when it needs to expose multiple candidates.
+
+At a glance:
+
+- `Text` is the original UTF‑8 text for the current item.
+- `Fragments` describes transformed spans in that text.
+  - each fragment has a rune-based `(Pos, Len)` range into `Text`.
+  - `Transformed` holds the transformed string for that span.
+  - `Variant` can be used to represent alternative candidates for the same span.
+- `RawTexts()` computes the unprocessed segments (the complement of `Fragments`).
+- `UTF8String()` reconstructs a final string by interleaving fragments and raw segments in positional order.
+
+`Result` also carries an optional `Error` field so processors can propagate failures without breaking the stream.
+
+---
+
+## Processing stages
 
 ### Processor and ProcessorFunc
 
-A `Processor` consumes a stream of `Result` values from an input channel and
-produces processed `Result` values on an output channel:
+A `Processor[S]` consumes a stream of `S` values and produces a stream of `S` values.
 
 ```go
-type Processor interface {
-    Apply(ctx context.Context, in <-chan textual.Result) <-chan textual.Result
+type Processor[S textual.UTF8Stringer[S]] interface {
+    Apply(ctx context.Context, in <-chan S) <-chan S
 }
 ```
 
-Most custom processing stages can be written as a simple function using
-`ProcessorFunc`:
+`ProcessorFunc` lets you write stages as plain functions:
 
 ```go
-echo := textual.ProcessorFunc(func(ctx context.Context, in <-chan textual.Result) <-chan textual.Result {
-    out := make(chan textual.Result)
-    go func() {
-        defer close(out)
-        for {
-            select {
-            case <-ctx.Done():
-                return
-            case res, ok := <-in:
-                if !ok {
+echo := textual.ProcessorFunc[textual.String](
+    func(ctx context.Context, in <-chan textual.String) <-chan textual.String {
+        out := make(chan textual.String)
+        go func() {
+            defer close(out)
+            for {
+                select {
+                case <-ctx.Done():
                     return
+                case s, ok := <-in:
+                    if !ok {
+                        return
+                    }
+                    out <- s // pass-through
                 }
-                // process res as needed; here we just echo it
-                out <- res
             }
-        }
-    }()
-    return out
-})
+        }()
+        return out
+    },
+)
 ```
 
 ### IOReaderProcessor
 
-`IOReaderProcessor` plugs an `io.Reader` into a `Processor` using a
-`bufio.SplitFunc`:
+`IOReaderProcessor` connects an `io.Reader` to a `Processor` using a `bufio.Scanner`.
+
+- it scans tokens using a `bufio.SplitFunc` (default: `bufio.ScanLines`),
+- it turns each token into an `S` using `FromUTF8String(token).WithIndex(i)`,
+- it streams those values into the processor.
 
 ```go
 reader := strings.NewReader("Hello, world!\n")
-proc   := echo                               // any textual.Processor
-ioProc := textual.NewIOReaderProcessor(proc, reader)
 
-// Optional: customise context and tokenization.
-ioProc.SetContext(ctx)                // defaults to context.Background()
-ioProc.SetSplitFunc(bufio.ScanLines)  // default; can be changed
+// Build a pipeline working on textual.String.
+ioProc := textual.NewIOReaderProcessor(echo, reader)
+
+// Optional.
+ioProc.SetContext(ctx)
+ioProc.SetSplitFunc(bufio.ScanLines)
 
 out := ioProc.Start()
-for res := range out {
-    fmt.Println(res.Render())
+for s := range out {
+    fmt.Print(s.UTF8String())
 }
 ```
 
-This is especially convenient for log files, sockets, pipes, etc.
+If your input is not UTF‑8, wrap the reader first:
+
+```go
+utf8Reader, _ := textual.NewUTF8Reader(rawReader, textual.ISO8859_1)
+ioProc := textual.NewIOReaderProcessor(echo, utf8Reader)
+```
 
 ### Chain
 
-`Chain` composes several processors in sequence:
+`Chain` composes processors in sequence.
 
 ```go
 chain := textual.NewChain(procA, procB, procC)
 ioProc := textual.NewIOReaderProcessor(chain, reader)
 ```
 
-The output of each processor is fed to the next one.
+The output of each stage is fed into the next stage.
 
 ### Router
 
-`Router` distributes `Result` values to one or more processors based on
-predicates and a routing strategy (first match, broadcast, round‑robin,
-random):
+`Router` distributes items to one or more processors based on predicates and a routing strategy:
+
+- first match
+- broadcast
+- round‑robin
+- random
+
+Example with `textual.Result` (routing based on remaining raw text):
 
 ```go
-router := textual.NewRouter(textual.RoutingStrategyFirstMatch)
+router := textual.NewRouter[textual.Result](textual.RoutingStrategyFirstMatch)
 
 router.AddRoute(
     func(ctx context.Context, res textual.Result) bool {
-        // route Results that still have raw text
+        // Route results that still have unprocessed segments.
         return len(res.RawTexts()) > 0
     },
-    dictProcessor,
+    dictionaryProcessor,
 )
 
-router.AddRoute(
-    nil, // always eligible
-    loggingProcessor,
-)
+router.AddRoute(nil, loggingProcessor) // always eligible
 ```
 
-### Encoding helpers
+### SyncApply
 
-The `encoding.go` module provides helpers to go from and to many encodings:
+`SyncApply` applies a processor to a single input value and collects all outputs.
 
-- `EncodingID` – enum-like type for encodings (UTF‑8, UTF‑16, ISO‑8859‑*, …)
-- `ParseEncoding` – parse a string (e.g. `"ISO-8859-1"`) into an `EncodingID`
-- `NewUTF8Reader` – stream‑decode from a source encoding into UTF‑8
-- `ToUTF8` / `ReaderToUTF8` – convert arbitrary encodings to UTF‑8
-- `FromUTF8` / `FromUTF8ToWriter` – encode UTF‑8 into a target encoding
-
-Example:
+- If the processor produces **0** outputs, the input is returned (pass‑through).
+- If it produces **1** output, it is returned.
+- If it produces **N>1** outputs, they are aggregated using `S.Aggregate`.
 
 ```go
-package main
-
-import (
-    "bytes"
-    "fmt"
-
-    textual "github.com/benoit-pereira-da-silva/textual/pkg/textual"
-)
-
-func main() {
-    // "Café" encoded as ISO-8859-1
-    encoded := []byte{0x43, 0x61, 0x66, 0xE9}
-
-    r := bytes.NewReader(encoded)
-    s, err := textual.ReaderToUTF8(r, textual.ISO8859_1)
-    if err != nil {
-        panic(err)
-    }
-    fmt.Println(s) // Café
-}
+out := textual.SyncApply(ctx, proc, in)
 ```
 
-### Transformations
+---
 
-A `Transformation` binds a processor with information about the input and
-output “nature” (dialect + encoding):
+## Transformations (dialect + encoding)
+
+`Transformation` binds:
+
+- a processor,
+- an input “nature” (`Dialect` + `EncodingID`),
+- an output “nature”.
+
+`Process` handles decoding → processing → encoding:
 
 ```go
-tr := textual.NewTransformation[textual.Processor](
-    "echo-utf8",
+tr := textual.NewTransformation[textual.Result](
+    "echo",
     echoProcessor,
     textual.Nature{Dialect: "plain", EncodingID: textual.UTF8},
     textual.Nature{Dialect: "plain", EncodingID: textual.UTF8},
@@ -200,77 +237,53 @@ if err := tr.Process(ctx, inputReadCloser, outputWriteCloser); err != nil {
 }
 ```
 
-`Process` takes care of:
+---
 
-- decoding input bytes to UTF‑8,
-- running the processor,
-- encoding the resulting text back to the requested encoding.
+## Encoding helpers
+
+The `encoding.go` module provides helpers to go from and to many encodings:
+
+- `EncodingID` / `ParseEncoding`
+- `NewUTF8Reader` (stream decode to UTF‑8)
+- `ToUTF8` / `ReaderToUTF8`
+- `FromUTF8` / `FromUTF8ToWriter`
+
+Example:
+
+```go
+// "Café" encoded as ISO‑8859‑1
+encoded := []byte{0x43, 0x61, 0x66, 0xE9}
+
+r := bytes.NewReader(encoded)
+s, err := textual.ReaderToUTF8(r, textual.ISO8859_1)
+if err != nil {
+    panic(err)
+}
+fmt.Println(s) // Café
+```
 
 ---
 
-## Tokenization helpers: ScanExpression
+## Tokenization helper: ScanExpression
 
-In addition to the standard `bufio` split functions, `textual` provides
-`ScanExpression`:
-
-```go
-// ScanExpression groups a word, the punctuation around it, and the
-// spaces / line breaks that surround it into a single token.
-func ScanExpression(data []byte, atEOF bool) (advance int, token []byte, err error)
-```
-
-Each token looks like:
+In addition to standard `bufio` split functions, `textual` provides `ScanExpression`, which groups:
 
 ```text
 [optional leading whitespace][non-whitespace run][optional trailing whitespace]
 ```
 
-This is particularly handy for “word‑by‑word” streaming where you still want
-to preserve punctuation and layout:
-
-```go
-package main
-
-import (
-    "bufio"
-    "fmt"
-    "strings"
-
-    textual "github.com/benoit-pereira-da-silva/textual/pkg/textual"
-)
-
-func main() {
-    input := "Hello, world!\n"
-    scanner := bufio.NewScanner(strings.NewReader(input))
-    scanner.Split(textual.ScanExpression)
-
-    for scanner.Scan() {
-        fmt.Print(scanner.Text())
-    }
-    // Output: "Hello, world!\n"
-}
-```
+This is useful for “word-by-word” streaming while preserving punctuation and layout.
 
 ---
 
 ## Examples
 
-The repository contains examples under `examples/`:
+Examples live under `examples/`.
 
-- [`examples/reverse_words`](examples/reverse_words) – streams an excerpt from
-  Baudelaire and reverses each word while preserving punctuation and layout.
-  It includes a `--word-by-word` mode that uses `textual.ScanExpression`.
-
-You can run the reverse words example with:
-
-```shell
-cd examples/reverse_words
-go run main.go --word-by-word
-```
+- `examples/reverse_words`: streams an excerpt from Baudelaire and reverses each word while preserving punctuation/layout. It includes a `--word-by-word` mode that uses `textual.ScanExpression`.
 
 ---
 
 ## License
 
-Licensed under the Apache License, Version 2.0. See the [LICENSE](LICENSE) file
-for details.
+Licensed under the Apache License, Version 2.0. See the `LICENSE` file for details.

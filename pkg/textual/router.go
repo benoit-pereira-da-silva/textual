@@ -21,96 +21,77 @@ import (
 	"time"
 )
 
-// RoutePredicate decides whether a given Result should be handled by a route.
+// RoutePredicate decides whether a given item should be handled by a route.
 //
 // The predicate has access to:
 //   - ctx: the processing context (for deadlines / external state).
-//   - res: the current Result.
+//   - item: the current value flowing through the pipeline.
 //
 // Examples:
 //
-//	// Route Result that still has raw text.
+//	// Route Result values that still have raw text.
 //	pred := func(ctx context.Context, res Result) bool {
-//	    return len(res.RawTexts()) > 0
+//		return len(res.RawTexts()) > 0
 //	}
 //
-//	// Route Result where Error is a "reachability" error.
-//	pred := func(ctx context.Context, res Result) bool {
-//	    var re *ReachabilityError
-//	    return errors.As(res.Error, &re)
+//	// Route String values matching a prefix.
+//	pred2 := func(ctx context.Context, s String) bool {
+//		return strings.HasPrefix(s.Value, "WARN")
 //	}
-type RoutePredicate[S UTF8Stringer[S]] func(ctx context.Context, res S) bool
+type RoutePredicate[S UTF8Stringer[S]] func(ctx context.Context, item S) bool
 
 // RoutingStrategy controls how the Router selects target routes among the ones
 // whose predicate matches.
 type RoutingStrategy int
 
 const (
-	// RoutingStrategyFirstMatch sends each Result to the first route whose
+	// RoutingStrategyFirstMatch sends each item to the first route whose
 	// predicate returns true. If multiple routes match, only the first one
 	// (in registration order) is used.
 	RoutingStrategyFirstMatch RoutingStrategy = iota
 
-	// RoutingStrategyBroadcast sends each Result to every route whose
-	// predicate returns true (or to all routes when predicates are nil).
+	// RoutingStrategyBroadcast sends each item to every route whose predicate
+	// returns true (or to all routes when predicates are nil).
 	RoutingStrategyBroadcast
 
-	// RoutingStrategyRoundRobin distributes Results over the set of routes
-	// whose predicate returns true using a round‑robin counter.
+	// RoutingStrategyRoundRobin distributes items over the set of routes whose
+	// predicate returns true using a round-robin counter.
 	RoutingStrategyRoundRobin
 
-	// RoutingStrategyRandom randomly picks a route among those whose
-	// predicate returns true.
+	// RoutingStrategyRandom randomly picks a route among those whose predicate
+	// returns true.
 	RoutingStrategyRandom
 )
 
 // route is an internal configuration element combining a Processor and its
 // selection predicate.
-type route[S UTF8Stringer[S], P Processor[S]] struct {
+type route[S UTF8Stringer[S]] struct {
 	processor Processor[S]
 	predicate RoutePredicate[S] // nil means "always eligible"
 }
 
-// Router is a Processor that routes incoming Results to one or more downstream
+// Router is a Processor that routes incoming items to one or more downstream
 // processors according to configurable predicates and a routing strategy.
 //
-// Typical usages:
+// Router implements a fan-out / fan-in pattern:
 //
-//   - Conditional routing:
+//   - Fan-out: items coming from `in` are dispatched to zero, one, or many
+//     route-specific input channels, depending on predicates and strategy.
+//   - Fan-in: all downstream outputs are merged back into a single output
+//     channel, which is returned to the caller.
 //
-//     router := NewRouter(RoutingStrategyFirstMatch)
-//     router.AddRoute(
-//     func(ctx context.Context, res Result) bool {
-//     // If there is still raw text, send to a dictionary processor.
-//     return len(res.RawTexts()) > 0
-//     },
-//     dictProcessor,
-//     )
+// Routing semantics:
 //
-//     router.AddRoute(
-//     func(ctx context.Context, res Result) bool {
-//     // If the error is a reachability issue, send to a fallback processor.
-//     // isReachabilityError is left to the caller to implement.
-//     return isReachabilityError(res.Error)
-//     },
-//     fallbackProcessor,
-//     )
+//   - If no route is configured, Router behaves as a pass-through Processor.
+//   - For each incoming item:
+//     1) the set of eligible routes is computed (predicate true or nil),
+//     2) the strategy decides which subset of eligible routes receives the item,
+//     3) if no route is selected, the item is forwarded unchanged.
 //
-//   - Load‑balancing / randomization:
-//
-//     router := NewRouter(RoutingStrategyRoundRobin, procA, procB, procC)
-//     // No predicates means all processors are always eligible.
-//     // Results will be distributed A -> B -> C -> A -> ...
-//
-//   - Broadcasting:
-//
-//     router := NewRouter(RoutingStrategyBroadcast)
-//     router.AddProcessor(loggingProcessor)
-//     router.AddProcessor(transformProcessor)
-//
-//     // Every Result goes to both processors; their outputs are merged.
-type Router[S UTF8Stringer[S], P Processor[S]] struct {
-	routes   []route[S, P]
+// Note: AddRoute/AddProcessor/SetStrategy are not concurrency-safe; configure
+// the router during pipeline construction, before calling Apply.
+type Router[S UTF8Stringer[S]] struct {
+	routes   []route[S]
 	strategy RoutingStrategy
 
 	mu      sync.Mutex // protects rnd and counter
@@ -122,10 +103,10 @@ type Router[S UTF8Stringer[S], P Processor[S]] struct {
 //
 // Optionally, a list of processors can be provided. They are registered as
 // routes with no predicate (always eligible). This is useful for simple
-// balancing setups (round‑robin, random, broadcast) where routing does
-// not depend on the Result content.
-func NewRouter[S UTF8Stringer[S], P Processor[S]](strategy RoutingStrategy, processors ...Processor[S]) *Router[S, P] {
-	r := &Router[S, P]{
+// balancing setups (round-robin, random, broadcast) where routing does not
+// depend on the item content.
+func NewRouter[S UTF8Stringer[S]](strategy RoutingStrategy, processors ...Processor[S]) *Router[S] {
+	r := &Router[S]{
 		strategy: strategy,
 		rnd:      rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
@@ -133,7 +114,7 @@ func NewRouter[S UTF8Stringer[S], P Processor[S]](strategy RoutingStrategy, proc
 		if p == nil {
 			continue
 		}
-		r.routes = append(r.routes, route[S, P]{processor: p})
+		r.routes = append(r.routes, route[S]{processor: p})
 	}
 	return r
 }
@@ -142,14 +123,11 @@ func NewRouter[S UTF8Stringer[S], P Processor[S]](strategy RoutingStrategy, proc
 //
 //   - If predicate is nil, the route is always considered eligible.
 //   - If processor is nil, the route is ignored.
-//
-// This method is not concurrency‑safe; it is intended to be called during
-// pipeline construction, before any call to Apply.
-func (r *Router[S, P]) AddRoute(predicate RoutePredicate[S], processor Processor[S]) {
+func (r *Router[S]) AddRoute(predicate RoutePredicate[S], processor Processor[S]) {
 	if processor == nil {
 		return
 	}
-	r.routes = append(r.routes, route[S, P]{
+	r.routes = append(r.routes, route[S]{
 		processor: processor,
 		predicate: predicate,
 	})
@@ -157,49 +135,29 @@ func (r *Router[S, P]) AddRoute(predicate RoutePredicate[S], processor Processor
 
 // AddProcessor is a convenience wrapper around AddRoute for routes that are
 // always eligible (predicate == nil).
-func (r *Router[S, P]) AddProcessor(processor Processor[S]) {
+func (r *Router[S]) AddProcessor(processor Processor[S]) {
 	r.AddRoute(nil, processor)
 }
 
 // SetStrategy changes the routing strategy.
-//
-// This method is not concurrency‑safe; it is intended to be called during
-// pipeline construction, before any call to Apply.
-func (r *Router[S, P]) SetStrategy(strategy RoutingStrategy) {
+func (r *Router[S]) SetStrategy(strategy RoutingStrategy) {
 	r.strategy = strategy
 }
 
 // Apply implements the Processor interface.
 //
-// It wires all configured routes into a fan‑out / fan‑in pattern:
-//
-//   - Fan‑out: Results coming from `in` are dispatched to zero, one, or many
-//     route‑specific input channels, depending on predicates and strategy.
-//   - Fan‑in: all downstream route outputs are merged back into a single
-//     output channel, which is returned to the caller.
-//
 // Context handling:
 //
 //   - If ctx is nil, context.Background() is used.
 //   - The same ctx is passed to every underlying Processor.
-//   - When ctx is canceled, the router stops reading from the upstream `in`,
-//     closes all route inputs, and drains all child outputs before closing
-//     the returned channel.
-//
-// Routing semantics:
-//
-//   - If no route is configured, Router behaves as a pass‑through Processor.
-//   - For each incoming Result:
-//   - the set of eligible routes is computed (predicate true or nil).
-//   - strategy decides which subset of eligible routes receives the Result.
-//   - if no routes are selected, the Result is forwarded unchanged to the
-//     output channel (pass‑through behavior).
-func (r *Router[S, P]) Apply(ctx context.Context, in <-chan S) <-chan S {
+//   - When ctx is canceled, the router stops reading from `in`, closes all
+//     route inputs, drains all child outputs, then closes the returned channel.
+func (r *Router[S]) Apply(ctx context.Context, in <-chan S) <-chan S {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	// No routes: transparent pass‑through Processor.
+	// No routes: transparent pass-through Processor.
 	if len(r.routes) == 0 {
 		out := make(chan S)
 		go func() {
@@ -207,9 +165,9 @@ func (r *Router[S, P]) Apply(ctx context.Context, in <-chan S) <-chan S {
 			for {
 				select {
 				case <-ctx.Done():
-					// Stop emitting new results on cancellation.
+					// Stop emitting new values on cancellation.
 					return
-				case res, ok := <-in:
+				case item, ok := <-in:
 					if !ok {
 						return
 					}
@@ -217,7 +175,7 @@ func (r *Router[S, P]) Apply(ctx context.Context, in <-chan S) <-chan S {
 					case <-ctx.Done():
 						// Context canceled while sending.
 						return
-					case out <- res:
+					case out <- item:
 					}
 				}
 			}
@@ -237,7 +195,7 @@ func (r *Router[S, P]) Apply(ctx context.Context, in <-chan S) <-chan S {
 
 	out := make(chan S)
 
-	// Fan‑in: merge all child outputs into the single out channel.
+	// Fan-in: merge all child outputs into the single out channel.
 	var wg sync.WaitGroup
 	wg.Add(len(childOuts))
 
@@ -247,20 +205,20 @@ func (r *Router[S, P]) Apply(ctx context.Context, in <-chan S) <-chan S {
 			for {
 				select {
 				case <-ctx.Done():
-					// Context canceled: drain remaining results from the child
+					// Context canceled: drain remaining values from the child
 					// channel so that downstream processors are not blocked on
 					// send, but do not forward them anymore.
 					for range ch {
 					}
 					return
-				case res, ok := <-ch:
+				case item, ok := <-ch:
 					if !ok {
 						// Child processor closed its output.
 						return
 					}
 					// Normal operation: forward to the merged output.
 					select {
-					case out <- res:
+					case out <- item:
 					case <-ctx.Done():
 						// Context canceled while sending: start draining.
 						for range ch {
@@ -272,14 +230,14 @@ func (r *Router[S, P]) Apply(ctx context.Context, in <-chan S) <-chan S {
 		}(childOuts[i])
 	}
 
-	// Fan‑out: dispatch incoming Results to the selected routes.
+	// Fan-out: dispatch incoming items to the selected routes.
 	go func() {
 		defer func() {
 			// Signal downstream processors that no more input will arrive.
 			for _, ch := range childIns {
 				close(ch)
 			}
-			// Wait until all fan‑in goroutines have completed, then close
+			// Wait until all fan-in goroutines have completed, then close
 			// the merged output channel.
 			wg.Wait()
 			close(out)
@@ -290,20 +248,20 @@ func (r *Router[S, P]) Apply(ctx context.Context, in <-chan S) <-chan S {
 			case <-ctx.Done():
 				// Stop reading from upstream when the context is canceled.
 				return
-			case res, ok := <-in:
+			case item, ok := <-in:
 				if !ok {
 					// Upstream closed; we're done.
 					return
 				}
 
-				// Resolve which routes should receive this Result.
-				indices := r.selectRoutes(ctx, res)
+				// Resolve which routes should receive this item.
+				indices := r.selectRoutes(ctx, item)
 				if len(indices) == 0 {
-					// No matching route: behave as pass‑through.
+					// No matching route: behave as pass-through.
 					select {
 					case <-ctx.Done():
 						return
-					case out <- res:
+					case out <- item:
 					}
 					continue
 				}
@@ -318,7 +276,7 @@ func (r *Router[S, P]) Apply(ctx context.Context, in <-chan S) <-chan S {
 					select {
 					case <-ctx.Done():
 						return
-					case childIns[idx] <- res:
+					case childIns[idx] <- item:
 					}
 				}
 			}
@@ -328,15 +286,15 @@ func (r *Router[S, P]) Apply(ctx context.Context, in <-chan S) <-chan S {
 	return out
 }
 
-// eligibleRoutes returns the indices of routes whose predicate matches
-// the given Result (or all routes with nil predicates).
-func (r *Router[S, P]) eligibleRoutes(ctx context.Context, res S) []int {
+// eligibleRoutes returns the indices of routes whose predicate matches the
+// given item (or all routes with nil predicates).
+func (r *Router[S]) eligibleRoutes(ctx context.Context, item S) []int {
 	indices := make([]int, 0, len(r.routes))
 	for i, rt := range r.routes {
 		if rt.processor == nil {
 			continue
 		}
-		if rt.predicate == nil || rt.predicate(ctx, res) {
+		if rt.predicate == nil || rt.predicate(ctx, item) {
 			indices = append(indices, i)
 		}
 	}
@@ -345,8 +303,8 @@ func (r *Router[S, P]) eligibleRoutes(ctx context.Context, res S) []int {
 
 // selectRoutes picks one or more routes among the eligible ones according to
 // the configured routing strategy.
-func (r *Router[S, P]) selectRoutes(ctx context.Context, res S) []int {
-	eligible := r.eligibleRoutes(ctx, res)
+func (r *Router[S]) selectRoutes(ctx context.Context, item S) []int {
+	eligible := r.eligibleRoutes(ctx, item)
 	if len(eligible) == 0 {
 		return nil
 	}
@@ -361,7 +319,7 @@ func (r *Router[S, P]) selectRoutes(ctx context.Context, res S) []int {
 		return []int{eligible[0]}
 
 	case RoutingStrategyRandom:
-		// Route Randomly to one among the matching routes.
+		// Route randomly to one among the matching routes.
 		r.mu.Lock()
 		idx := r.rnd.Intn(len(eligible))
 		chosen := eligible[idx]
@@ -369,7 +327,7 @@ func (r *Router[S, P]) selectRoutes(ctx context.Context, res S) []int {
 		return []int{chosen}
 
 	case RoutingStrategyRoundRobin:
-		//Route to one among matching routes, balance the load equitably.
+		// Route to one among matching routes, balancing load equitably.
 		r.mu.Lock()
 		idx := int(r.counter % uint64(len(eligible)))
 		chosen := eligible[idx]
