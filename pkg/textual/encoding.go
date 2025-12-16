@@ -86,8 +86,10 @@ const (
 	EUCKR
 )
 
+type EncodingName = string
+
 // EncodingName returns a canonical string name.
-func (e EncodingID) EncodingName() string {
+func (e EncodingID) EncodingName() EncodingName {
 	switch e {
 	case UTF8:
 		return "UTF-8"
@@ -183,7 +185,7 @@ func (e EncodingID) EncodingName() string {
 }
 
 // nameToEncoding maps lower-case names to enum.
-var nameToEncoding = map[string]EncodingID{
+var nameToEncoding = map[EncodingName]EncodingID{
 	"utf-8":        UTF8,
 	"utf8":         UTF8,
 	"utf-16le":     UTF16LE,
@@ -238,7 +240,7 @@ var nameToEncoding = map[string]EncodingID{
 }
 
 // ParseEncoding returns the EncodingID for a given name (case-insensitive).
-func ParseEncoding(name string) (EncodingID, error) {
+func ParseEncoding(name EncodingName) (EncodingID, error) {
 	key := strings.ToLower(strings.TrimSpace(name))
 	if enc, ok := nameToEncoding[key]; ok {
 		return enc, nil
