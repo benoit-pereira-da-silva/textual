@@ -82,6 +82,38 @@ function joinErrorStrings(a, b) {
 }
 
 /**
+ * isTrailingPunctOrSpace reports whether a single code point should be considered
+ * removable at the end of a rendered line for UX purposes.
+ *
+ * This is intentionally conservative: it trims whitespace and common punctuation
+ * or closing quote/bracket characters.
+ *
+ * @param {string} ch
+ * @returns {boolean}
+ */
+function isTrailingPunctOrSpace(ch) {
+    if (!ch) return false;
+    if (/\s/.test(ch)) return true;
+    const punct = ".,;:!?…»«\"'’)]}";
+    return punct.indexOf(ch) !== -1;
+}
+
+/**
+ * Trim trailing punctuation/spaces from a rendered line, in code-point space.
+ *
+ * @param {string} line
+ * @returns {string}
+ */
+function trimLineEndPunctOrSpace(line) {
+    const runes = Array.from(String(line ?? ""));
+    let end = runes.length;
+    while (end > 0 && isTrailingPunctOrSpace(runes[end - 1])) {
+        end--;
+    }
+    return runes.slice(0, end).join("");
+}
+
+/**
  * Fragment represents a transformed portion of the original text.
  *
  * Positions (pos) and lengths (len) are expressed in Unicode code points,
@@ -359,6 +391,18 @@ export class Parcel {
     }
 
     /**
+     * Aggregate multiple parcels into one, sorting by index (stable).
+     *
+     * This is designed for streaming use-cases where chunks may arrive out of order.
+     *
+     * @param {Array<Parcel|Object>} parcels
+     * @returns {Parcel}
+     */
+    static aggregateByIndex(parcels) {
+        return new Parcel().aggregateByIndex(parcels);
+    }
+
+    /**
      * Serializes the Parcel to a plain JSON-friendly object.
      *
      * @returns {Object}
@@ -440,6 +484,142 @@ export class Parcel {
      */
     fromUTF8String(text) {
         return new Parcel({ index: -1, text: String(text), fragments: [], error: null });
+    }
+
+    /**
+     * Returns a copy of this Parcel with a new fragments array.
+     *
+     * @param {Array<Fragment|Object>} fragments
+     * @returns {Parcel}
+     */
+    withFragments(fragments) {
+        return new Parcel({
+            index: this.index,
+            text: this.text,
+            fragments: fragments || [],
+            error: this.error
+        });
+    }
+
+    /**
+     * Returns a copy of the Parcel where, for each exact {pos,len} range, only the
+     * "best" fragment is kept (highest confidence, tie-breaker: lowest variant).
+     *
+     * Useful when a backend emits multiple candidate variants for a single segment.
+     *
+     * @returns {Parcel}
+     */
+    bestConfidenceVariantByRange() {
+        /** @type {Map<string, Fragment>} */
+        const bestByRange = new Map();
+
+        const pickBetter = (a, b) => {
+            // Prefer higher confidence
+            if (a.confidence !== b.confidence) {
+                return a.confidence > b.confidence ? a : b;
+            }
+            // Prefer lower variant index (stable UI expectations)
+            if (a.variant !== b.variant) {
+                return a.variant < b.variant ? a : b;
+            }
+            // Deterministic tie-breaker
+            const at = String(a.transformed);
+            const bt = String(b.transformed);
+            return at <= bt ? a : b;
+        };
+
+        for (const f of (this.fragments || [])) {
+            if (!f || !Number.isFinite(f.pos) || !Number.isFinite(f.len)) continue;
+            const pos = Math.trunc(f.pos);
+            const len = Math.trunc(f.len);
+            if (len <= 0) continue;
+
+            const key = `${pos}:${len}`;
+            const cur = bestByRange.get(key);
+            if (!cur) {
+                bestByRange.set(key, f);
+                continue;
+            }
+            bestByRange.set(key, pickBetter(cur, f));
+        }
+
+        // Emit a deterministic order by position.
+        const chosen = Array.from(bestByRange.values()).map((f) => new Fragment({
+            transformed: f.transformed,
+            pos: f.pos,
+            len: f.len,
+            confidence: f.confidence,
+            variant: f.variant
+        }));
+
+        chosen.sort((a, b) => {
+            if (a.pos !== b.pos) return a.pos - b.pos;
+            if (a.len !== b.len) return a.len - b.len;
+            return a.variant - b.variant;
+        });
+
+        return new Parcel({
+            index: this.index,
+            text: this.text,
+            fragments: chosen,
+            error: this.error
+        });
+    }
+
+    /**
+     * Render this Parcel with optional validation and line trimming.
+     *
+     * Options:
+     *  - variantPolicy: "default" | "bestConfidence"
+     *      - "default" uses the same behaviour as render().
+     *      - "bestConfidence" selects one fragment per {pos,len} range using confidence/variant.
+     *  - trimLineEnd: when true, removes trailing punctuation/spaces per output line.
+     *  - normalizeWhitespaceOnlyLines: when true, lines that are whitespace-only in the original
+     *    text are rendered as empty lines.
+     *
+     * @param {{variantPolicy?: ("default"|"bestConfidence"), trimLineEnd?: boolean, normalizeWhitespaceOnlyLines?: boolean}} [options]
+     * @returns {UTF8Text}
+     */
+    renderWith(options = {}) {
+        const opts = (options && typeof options === "object") ? options : {};
+        const variantPolicy = String(opts.variantPolicy ?? "default");
+        const trimLineEnd = !!opts.trimLineEnd;
+        const normalizeWhitespaceOnlyLines = !!opts.normalizeWhitespaceOnlyLines;
+
+        const base = (variantPolicy === "bestConfidence")
+            ? this.bestConfidenceVariantByRange()
+            : this;
+
+        const rendered = base.render();
+
+        if (!trimLineEnd && !normalizeWhitespaceOnlyLines) {
+            return rendered;
+        }
+
+        const originalLines = String(this.text ?? "").split("\n");
+        const outLines = String(rendered ?? "").split("\n");
+
+        const max = Math.max(originalLines.length, outLines.length);
+        /** @type {string[]} */
+        const finalLines = [];
+
+        for (let i = 0; i < max; i++) {
+            const origLine = (i < originalLines.length) ? originalLines[i] : "";
+            const outLine = (i < outLines.length) ? outLines[i] : "";
+
+            if (normalizeWhitespaceOnlyLines && origLine.trim() === "") {
+                finalLines.push("");
+                continue;
+            }
+
+            if (trimLineEnd) {
+                finalLines.push(trimLineEndPunctOrSpace(outLine));
+            } else {
+                finalLines.push(outLine);
+            }
+        }
+
+        return finalLines.join("\n");
     }
 
     /**
@@ -676,6 +856,34 @@ export class Parcel {
             fragments,
             error: err
         });
+    }
+
+    /**
+     * Aggregates multiple parcels into a single parcel by sorting the inputs by their index.
+     *
+     * This is the streaming-friendly variant of aggregate():
+     *  - Parcels are parsed and then stably sorted by index.
+     *  - When indices are equal, original arrival order is preserved.
+     *
+     * @param {Array<Parcel|Object>} parcels
+     * @returns {Parcel}
+     */
+    aggregateByIndex(parcels) {
+        const decorated = (parcels || []).map((p, order) => ({
+            p: Parcel.fromJSON(p),
+            order: Number.isFinite(order) ? order : 0
+        }));
+
+        decorated.sort((a, b) => {
+            const ia = Number.isFinite(a.p.index) ? a.p.index : -1;
+            const ib = Number.isFinite(b.p.index) ? b.p.index : -1;
+
+            if (ia !== ib) return ia - ib;
+            return a.order - b.order;
+        });
+
+        const sorted = decorated.map((x) => x.p);
+        return this.aggregate(sorted);
     }
 }
 
