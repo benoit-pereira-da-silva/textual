@@ -82,6 +82,16 @@ function joinErrorStrings(a, b) {
 }
 
 /**
+ * isTrailingSpace reports whether a single code point is whitespace.
+ *
+ * @param {string} ch
+ * @returns {boolean}
+ */
+function isTrailingSpace(ch) {
+    return !!ch && /\s/.test(ch);
+}
+
+/**
  * isTrailingPunctOrSpace reports whether a single code point should be considered
  * removable at the end of a rendered line for UX purposes.
  *
@@ -96,6 +106,21 @@ function isTrailingPunctOrSpace(ch) {
     if (/\s/.test(ch)) return true;
     const punct = ".,;:!?…»«\"'’)]}";
     return punct.indexOf(ch) !== -1;
+}
+
+/**
+ * Trim trailing whitespace from a rendered line, in code-point space.
+ *
+ * @param {string} line
+ * @returns {string}
+ */
+function trimLineEndSpace(line) {
+    const runes = Array.from(String(line ?? ""));
+    let end = runes.length;
+    while (end > 0 && isTrailingSpace(runes[end - 1])) {
+        end--;
+    }
+    return runes.slice(0, end).join("");
 }
 
 /**
@@ -573,18 +598,39 @@ export class Parcel {
      *  - variantPolicy: "default" | "bestConfidence"
      *      - "default" uses the same behaviour as render().
      *      - "bestConfidence" selects one fragment per {pos,len} range using confidence/variant.
-     *  - trimLineEnd: when true, removes trailing punctuation/spaces per output line.
+     *  - trimLineEnd:
+     *      - false (default): no trimming
+     *      - true: trims trailing punctuation/spaces per output line (legacy behaviour)
+     *      - "spaces": trims trailing whitespace only (safe for code)
      *  - normalizeWhitespaceOnlyLines: when true, lines that are whitespace-only in the original
      *    text are rendered as empty lines.
      *
-     * @param {{variantPolicy?: ("default"|"bestConfidence"), trimLineEnd?: boolean, normalizeWhitespaceOnlyLines?: boolean}} [options]
+     * @param {{variantPolicy?: ("default"|"bestConfidence"), trimLineEnd?: (boolean|"spaces"), normalizeWhitespaceOnlyLines?: boolean}} [options]
      * @returns {UTF8Text}
      */
     renderWith(options = {}) {
         const opts = (options && typeof options === "object") ? options : {};
         const variantPolicy = String(opts.variantPolicy ?? "default");
-        const trimLineEnd = !!opts.trimLineEnd;
         const normalizeWhitespaceOnlyLines = !!opts.normalizeWhitespaceOnlyLines;
+
+        // trimLineEnd supports both the legacy boolean as well as a safe string mode.
+        const trimLineEndOpt = opts.trimLineEnd;
+        const trimMode = (() => {
+            if (trimLineEndOpt === true) return "punctOrSpace";
+            if (trimLineEndOpt === false || trimLineEndOpt === null || typeof trimLineEndOpt === "undefined") {
+                return "none";
+            }
+            const v = String(trimLineEndOpt).trim().toLowerCase();
+            if (v === "" || v === "none" || v === "off" || v === "false") return "none";
+            if (v === "spaces" || v === "space" || v === "spacesonly" || v === "spaceonly" || v === "whitespace") {
+                return "spaces";
+            }
+            if (v === "punct" || v === "punctorSpace" || v === "punctor_space" || v === "punctorspace") {
+                return "punctOrSpace";
+            }
+            // Backward-compatible fallback: treat unknown truthy values like "true".
+            return "punctOrSpace";
+        })();
 
         const base = (variantPolicy === "bestConfidence")
             ? this.bestConfidenceVariantByRange()
@@ -592,7 +638,7 @@ export class Parcel {
 
         const rendered = base.render();
 
-        if (!trimLineEnd && !normalizeWhitespaceOnlyLines) {
+        if (trimMode === "none" && !normalizeWhitespaceOnlyLines) {
             return rendered;
         }
 
@@ -612,7 +658,9 @@ export class Parcel {
                 continue;
             }
 
-            if (trimLineEnd) {
+            if (trimMode === "spaces") {
+                finalLines.push(trimLineEndSpace(outLine));
+            } else if (trimMode === "punctOrSpace") {
                 finalLines.push(trimLineEndPunctOrSpace(outLine));
             } else {
                 finalLines.push(outLine);
@@ -757,18 +805,20 @@ export class Parcel {
         const rawTexts = this.rawTexts();
 
         // Convert fragments into segments. Only one fragment per starting
-        // position is emitted, mirroring the Go version that uses lastFrag.Pos.
-        let lastFragPos = -1;
+        // position is emitted (the first one in the fragments array).
+        /** @type {Set<number>} */
+        const seenFragPos = new Set();
         if (Array.isArray(this.fragments)) {
             for (const f of this.fragments) {
                 if (!f) continue;
-                if (f.pos !== lastFragPos) {
-                    segments.push({
-                        pos: Number.isFinite(f.pos) ? Math.trunc(f.pos) : 0,
-                        text: String(f.transformed)
-                    });
-                    lastFragPos = f.pos;
-                }
+                const pos = Number.isFinite(f.pos) ? Math.trunc(f.pos) : 0;
+                if (seenFragPos.has(pos)) continue;
+
+                seenFragPos.add(pos);
+                segments.push({
+                    pos,
+                    text: String(f.transformed)
+                });
             }
         }
 
