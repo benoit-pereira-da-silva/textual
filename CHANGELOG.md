@@ -1,5 +1,5 @@
 # Unreleased
-
++ Added `textual.JSON` carrier.
 + Renamed `UTF8Stringer` to `Carrier`.
 + Renamed `Result` to `Parcel`.
 + Added error support to carriers (`WithError(err error)` / `GetError() error`) so processors can report per-item failures without breaking the stream.

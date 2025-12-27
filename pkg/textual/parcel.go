@@ -162,16 +162,16 @@ func (r Parcel) UTF8String() UTF8String {
 // positions into the coordinate space of the aggregated Text.
 //
 // Errors are merged by taking the first non-nil error.
-func (r Parcel) Aggregate(results []Parcel) Parcel {
+func (r Parcel) Aggregate(parcels []Parcel) Parcel {
 	var aggregated Parcel
-	if len(results) == 0 {
+	if len(parcels) == 0 {
 		return aggregated
 	}
 	var builder strings.Builder
 
 	// Precompute capacity and first error, if any.
 	totalFragments := 0
-	for _, res := range results {
+	for _, res := range parcels {
 		totalFragments += len(res.Fragments)
 		if aggregated.Error == nil && res.Error != nil {
 			aggregated.Error = res.Error
@@ -181,7 +181,7 @@ func (r Parcel) Aggregate(results []Parcel) Parcel {
 	aggregated.Index = -1
 	offset := 0 // rune offset in the aggregated Text
 
-	for _, res := range results {
+	for _, res := range parcels {
 		textStr := res.Text
 		builder.WriteString(textStr)
 
