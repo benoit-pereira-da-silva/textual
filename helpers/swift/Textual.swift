@@ -15,6 +15,9 @@
 // It also provides a minimal UTF8String helper mirroring Go's textual.String,
 // useful when you only need plain UTF‑8 text + index + error in client code.
 //
+// In addition, it provides a minimal JSON carrier mirroring Go's textual.JSON
+// plus a scanJSON tokenizer helper to split a byte stream into JSON values.
+//
 // It is transport-agnostic: it assumes you already receive Parcel-like JSON
 // objects (for example from URLSession, WebSocket, or other networking code)
 // and helps you manipulate them in your Swift client.
@@ -166,6 +169,141 @@ public struct UTF8String: Codable, Equatable {
 @discardableResult
 public func utf8String(_ text: UTF8Text) -> UTF8String {
     return UTF8String(value: text, index: 0, error: nil)
+}
+
+
+// MARK: - Minimal carrier: JSON (mirrors Go textual.JSON)
+
+/// JSON is a minimal "carrier" helper mirroring Go's `textual.JSON`.
+///
+/// Use it when your pipeline transports raw JSON values (objects or arrays)
+/// instead of plain UTF‑8 text.
+///
+/// Typical streaming use-case:
+///   - Tokenize a byte stream into JSON values (see `scanJSON` below).
+///   - Attach an ordering index.
+///   - Aggregate multiple JSON values into a single JSON array when needed.
+///
+/// The `value` property holds the raw JSON text (UTF‑8).
+/// This helper does NOT parse or validate JSON; it only transports it.
+public struct JSON: Codable, Equatable {
+    /// The raw JSON value as UTF‑8 text (for example `{"a":1}` or `[1,2]`).
+    public var value: UTF8Text
+
+    /// Optional index in a stream.
+    public var index: Int
+
+    /// Optional error string (portable across JSON clients).
+    public var error: String?
+
+    public init(
+        value: UTF8Text,
+        index: Int = 0,
+        error: String? = nil
+    ) {
+        self.value = value
+        self.index = index
+        self.error = error
+    }
+
+    /// Returns the raw JSON text (Go: UTF8String()).
+    public func utf8String() -> UTF8Text {
+        return value
+    }
+
+    /// Creates a new JSON carrier from a UTF‑8 token (Go: FromUTF8String()).
+    public func fromUTF8String(_ text: UTF8Text) -> JSON {
+        return JSON(value: text, index: 0, error: nil)
+    }
+
+    /// Returns a copy with its index set (Go: WithIndex()).
+    public func withIndex(_ index: Int) -> JSON {
+        var copy = self
+        copy.index = index
+        return copy
+    }
+
+    /// Returns the stored index (Go: GetIndex()).
+    public func getIndex() -> Int {
+        return index
+    }
+
+    /// Returns a copy with an error merged (Go: WithError()).
+    ///
+    /// Errors are stored as plain strings for portability. When multiple errors
+    /// are attached, they are concatenated with `; `.
+    public func withError(_ err: String?) -> JSON {
+        guard let err = err?.trimmingCharacters(in: .whitespacesAndNewlines), !err.isEmpty else {
+            return self
+        }
+        var copy = self
+        if let existing = copy.error, !existing.isEmpty {
+            if existing != err {
+                copy.error = existing + "; " + err
+            }
+        } else {
+            copy.error = err
+        }
+        return copy
+    }
+
+    /// Returns the stored error (Go: GetError()).
+    public func getError() -> String? {
+        return error
+    }
+
+    /// Aggregates multiple JSON values into a single JSON array.
+    ///
+    /// Behaviour mirrors Go's `textual.JSON.Aggregate` intent:
+    ///   - Items are stably sorted by index.
+    ///   - When indices are equal, `value` is used as a tie-breaker.
+    ///   - The output index is reset to 0.
+    ///   - Errors are merged into a single portable string.
+    ///
+    /// Important: no JSON validation is performed; `value` strings are inserted
+    /// as-is into the output array.
+    public func aggregate(_ items: [JSON]) -> JSON {
+        // Stable sort: keep original order as a final tie-breaker.
+        let indexed = items.enumerated().map { (offset: $0.offset, item: $0.element) }
+        let sorted = indexed.sorted { a, b in
+            if a.item.index != b.item.index {
+                return a.item.index < b.item.index
+            }
+            if a.item.value != b.item.value {
+                return a.item.value < b.item.value
+            }
+            return a.offset < b.offset
+        }.map { $0.item }
+
+        var out = "["
+        // Rough capacity estimate.
+        out.reserveCapacity(sorted.reduce(2) { $0 + $1.value.count + 1 })
+
+        var mergedError: String? = nil
+        for (i, it) in sorted.enumerated() {
+            if i > 0 {
+                out.append(",")
+            }
+            out.append(it.value)
+            if let e = it.error, !e.isEmpty {
+                mergedError = (mergedError == nil) ? e : (mergedError == e ? mergedError : (mergedError! + "; " + e))
+            }
+        }
+        out.append("]")
+
+        return JSON(value: out, index: 0, error: mergedError)
+    }
+}
+
+/// Convenience factory for the minimal JSON carrier helper.
+///
+/// Creates a base JSON with:
+///   - value = given argument
+///   - index = 0
+///   - error = nil
+@discardableResult
+public func rawJSON(_ text: UTF8Text) -> JSON {
+    return JSON(value: text, index: 0, error: nil)
 }
 
 // MARK: - Core data types (rich carrier): Parcel / Fragment / RawText
@@ -374,6 +512,186 @@ public struct Parcel: Codable, Equatable {
 @discardableResult
 public func input(_ text: UTF8Text) -> Parcel {
     return Parcel(index: -1, text: text, fragments: [], error: nil)
+}
+
+
+// MARK: - Streaming tokenization helper: scanJSON (mirrors Go ScanJSON)
+
+/// Errors produced by `scanJSON`.
+public enum JSONScanError: Error, LocalizedError, Equatable {
+    /// The stream ended while a JSON value was still open.
+    case unexpectedEOF
+
+    /// A closing delimiter was found while no opening delimiter was pending.
+    case unexpectedClosing(byte: UInt8, index: Int)
+
+    /// A closing delimiter did not match the current opening delimiter.
+    case mismatchedClosing(byte: UInt8, expectedOpen: UInt8, index: Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .unexpectedEOF:
+            return "Unexpected EOF while scanning JSON"
+        case .unexpectedClosing(let byte, let index):
+            return "Unexpected closing \(JSONScanError.describe(byte)) at byte \(index)"
+        case .mismatchedClosing(let byte, let expectedOpen, let index):
+            return "Mismatched closing \(JSONScanError.describe(byte)) for \(JSONScanError.describe(expectedOpen)) at byte \(index)"
+        }
+    }
+
+    private static func describe(_ byte: UInt8) -> String {
+        switch byte {
+        case 0x7B: return "'{'"
+        case 0x7D: return "'}'"
+        case 0x5B: return "'['"
+        case 0x5D: return "']'"
+        case 0x22: return "'\"'"
+        default:
+            // Printable ASCII range.
+            if byte >= 0x20 && byte <= 0x7E {
+                return "'" + String(UnicodeScalar(byte)) + "'"
+            }
+            return "0x" + String(byte, radix: 16, uppercase: true)
+        }
+    }
+}
+
+/// scanJSON tokenizes a buffer into a single top-level JSON value (object or array).
+///
+/// This is a Swift analogue of Go's `bufio.SplitFunc` used by `ScanJSON`.
+///
+/// - Parameters:
+///   - data: The current buffer (UTF‑8 bytes).
+///   - atEOF: Whether the stream has ended.
+/// - Returns: A tuple with:
+///   - advance: number of bytes to consume from `data`
+///   - token: a `Data` slice containing the JSON value (when complete)
+///   - error: non-nil on framing errors (mismatched delimiters, unexpected EOF)
+///
+/// Behavior:
+///
+///   - Any leading bytes before the first `{` or `[` are ignored (consumed).
+///   - Once a `{` or `[` is found, nesting is tracked until the matching closing
+///     delimiter is found.
+///   - JSON strings are recognized; braces/brackets inside strings do not affect
+///     nesting. Basic escape handling is implemented so `\"` does not end a string.
+///   - If `atEOF` is true and a JSON value is still open, `error` is set to
+///     `JSONScanError.unexpectedEOF`.
+public func scanJSON(_ data: Data, atEOF: Bool) -> (advance: Int, token: Data?, error: Error?) {
+    // No data and nothing more to read.
+    if atEOF && data.isEmpty {
+        return (advance: 0, token: nil, error: nil)
+    }
+
+    // Find the first '{' or '['. Everything before it is ignored.
+    var start: Int? = nil
+    for (i, b) in data.enumerated() {
+        if b == 0x7B /* '{' */ || b == 0x5B /* '[' */ {
+            start = i
+            break
+        }
+    }
+
+    guard let startIndex = start else {
+        // No opening delimiter in the current buffer.
+        // Since we explicitly ignore leading noise, we can safely consume the
+        // whole buffer (even when !atEOF) to avoid unbounded growth.
+        return (advance: data.count, token: nil, error: nil)
+    }
+
+    // Consume ignored leading bytes first so the caller can retry from the
+    // opening delimiter on the next iteration.
+    if startIndex > 0 {
+        return (advance: startIndex, token: nil, error: nil)
+    }
+
+    // data[0] is '{' or '['.
+    var stack: [UInt8] = []
+    stack.reserveCapacity(8)
+    stack.append(data[0])
+
+    var inString = false
+    var escaped = false
+
+    // Start scanning right after the opening delimiter.
+    var i = 1
+    while i < data.count {
+        let b = data[i]
+
+        if inString {
+            if escaped {
+                escaped = false
+                i += 1
+                continue
+            }
+            if b == 0x5C /* '\' */ {
+                escaped = true
+                i += 1
+                continue
+            }
+            if b == 0x22 /* '"' */ {
+                inString = false
+            }
+            i += 1
+            continue
+        }
+
+        // Outside of strings.
+        if b == 0x22 /* '"' */ {
+            inString = true
+            i += 1
+            continue
+        }
+
+        if b == 0x7B /* '{' */ || b == 0x5B /* '[' */ {
+            stack.append(b)
+            i += 1
+            continue
+        }
+
+        if b == 0x7D /* '}' */ || b == 0x5D /* ']' */ {
+            guard let top = stack.last else {
+                return (advance: 0, token: nil, error: JSONScanError.unexpectedClosing(byte: b, index: i))
+            }
+
+            let matches = (b == 0x7D && top == 0x7B) || (b == 0x5D && top == 0x5B)
+            guard matches else {
+                return (advance: 0, token: nil, error: JSONScanError.mismatchedClosing(byte: b, expectedOpen: top, index: i))
+            }
+
+            // Pop.
+            stack.removeLast()
+
+            if stack.isEmpty {
+                let end = i + 1
+                return (advance: end, token: data.subdata(in: 0..<end), error: nil)
+            }
+
+            i += 1
+            continue
+        }
+
+        i += 1
+    }
+
+    // Buffer ended before we found the matching closing delimiter.
+    if atEOF {
+        return (advance: 0, token: nil, error: JSONScanError.unexpectedEOF)
+    }
+    return (advance: 0, token: nil, error: nil)
+}
+
+/// Convenience overload that scans a UTF‑8 string buffer.
+///
+/// - Note: `advance` is expressed in **UTF‑8 bytes**, not Swift `String.Index`.
+public func scanJSON(_ text: String, atEOF: Bool) -> (advance: Int, token: String?, error: Error?) {
+    let data = Data(text.utf8)
+    let res = scanJSON(data, atEOF: atEOF)
+    if let tokenData = res.token {
+        let tokenText = String(data: tokenData, encoding: .utf8) ?? ""
+        return (advance: res.advance, token: tokenText, error: res.error)
+    }
+    return (advance: res.advance, token: nil, error: res.error)
 }
 
 // MARK: - RawTexts / Render

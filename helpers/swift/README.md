@@ -1,22 +1,26 @@
 # textual-swift
 
-Lightweight Swift utilities to work with `textual` **`Parcel`** objects in iOS / macOS clients.
+Lightweight Swift utilities to work with `textual` values in iOS / macOS clients.
 
 This module is the client-side Swift counterpart of the Go `textual`:
 
 - `Parcel.rawTexts()` – compute the raw segments of a text that are **not** covered by any fragment.
 - `Parcel.render()` – merge transformed fragments and raw text back into a single output string.
 - A minimal `UTF8String` helper (mirrors Go’s `textual.String`) when you only need plain text + index + error.
+- A minimal `JSON` helper (mirrors Go’s `textual.JSON`) when you want to carry raw JSON values with index + error.
+- `scanJSON(data:atEOF:)` framing helper to split a byte stream into top-level JSON values (object `{...}` or array `[...]`).
 - `EncodingID` catalogue – mirror of the Go `EncodingID` enum and `nameToEncoding` dictionary.
 
 No networking or transcoding is implemented here on purpose: this file is
-transport-agnostic and only deals with in-memory `Parcel` values.
+transport-agnostic and only deals with in-memory values.
 
 ## Features
 
 - ✅ Structs matching the Go `Parcel`, `Fragment`, and `RawText` layout.
 - ✅ `rawTexts()` and `render()` logic aligned with the Go implementation.
 - ✅ Minimal `UTF8String` carrier helper mirroring Go’s `textual.String`.
+- ✅ Minimal `JSON` carrier helper mirroring Go’s `textual.JSON`.
+- ✅ `scanJSON(...)` tokenizer helper for JSON framing.
 - ✅ `EncodingID` enum with the same numeric values as the Go / JS versions.
 - ✅ `EncodingID.nameToEncoding` and `EncodingID.parse(_:)` helpers.
 - ✅ `Codable` conformance for straightforward JSON decoding.
@@ -57,6 +61,13 @@ public struct Parcel: Codable, Equatable {
 // Minimal carrier mirroring Go textual.String
 public struct UTF8String: Codable, Equatable {
     public var value: String
+    public var index: Int
+    public var error: String?
+}
+
+// Minimal JSON carrier mirroring Go textual.JSON
+public struct JSON: Codable, Equatable {
+    public var value: Data
     public var index: Int
     public var error: String?
 }
@@ -116,6 +127,37 @@ print(s.utf8String()) // "plain token"
 ```
 
 This mirrors the role of Go’s `textual.String`.
+
+## JSON framing: scanJSON
+
+When you receive a stream containing concatenated JSON values (optionally with
+noise between them), you can frame it with `scanJSON`.
+
+Rules:
+
+- Everything before the first `{` or `[` is ignored (consumed).
+- Nesting is tracked until the matching `}` or `]`.
+- Quotes and escapes are handled so braces inside JSON strings don’t affect nesting.
+
+Example:
+
+```swift
+import Foundation
+
+var buffer = Data(" \n{\"a\":[1,2,{\"b\":\"x\"}]}{\"c\":3}".utf8)
+
+while true {
+    let res = scanJSON(buffer, atEOF: true)
+    if let err = res.error { throw err }
+    guard let token = res.token else { break }
+
+    // token is a Data containing one full JSON value
+    let jsonText = String(decoding: token, as: UTF8.self)
+    print("json token:", jsonText)
+
+    buffer.removeFirst(res.advance)
+}
+```
 
 ## Encoding dictionary
 

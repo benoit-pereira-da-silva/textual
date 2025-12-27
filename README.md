@@ -9,13 +9,10 @@ It focuses on:
 - **Streaming**: process text progressively as it arrives (readers, sockets, pipes, scanners…).
 - **Composition**: chain stages, route items to multiple stages, merge results.
 - **Encodings**: read/write many encodings while keeping an internal UTF‑8 representation.
-- **Metadata-friendly**: pipelines are generic and can carry either plain strings or richer objects.
+- **Metadata-friendly**: pipelines are generic and can carry either plain strings, richer objects, or raw JSON values.
 - **Error propagation**: processors can attach non-fatal, per-item errors to the flowing values without breaking the stream.
 
 The library is used by higher-level projects like Tipa, but it can be used standalone in any Go program that needs robust incremental text processing.
-
-
-
 
 ---
 
@@ -108,6 +105,22 @@ At a glance:
 - `RawTexts()` computes the unprocessed segments (the complement of `Fragments`).
 - `UTF8String()` reconstructs a final string by interleaving fragments and raw segments in positional order.
 - `Error` carries optional per-item errors (processor failures, fallbacks, warnings…).
+
+#### `textual.JSON` (minimal raw JSON carrier)
+
+Use `textual.JSON` when your pipeline should carry **raw JSON values** rather than plain text.
+
+- `Value` is the raw JSON bytes for one top-level value (`json.RawMessage`).
+- `Index` is optional ordering metadata (for stable aggregation).
+- `Error` carries optional per-item errors.
+
+Aggregation concatenates multiple JSON values into a single JSON array:
+
+```json
+[ <value0>, <value1>, ... ]
+```
+
+This is useful when you process a stream of JSON objects/arrays and need to “fan-in” back into one JSON value.
 
 ---
 
@@ -323,7 +336,9 @@ fmt.Println(s) // Café
 
 ---
 
-## Tokenization helper: ScanExpression
+## Tokenization helpers
+
+### ScanExpression
 
 In addition to standard `bufio` split functions, `textual` provides `ScanExpression`, which groups:
 
@@ -332,6 +347,27 @@ In addition to standard `bufio` split functions, `textual` provides `ScanExpress
 ```
 
 This is useful for “word-by-word” streaming while preserving punctuation and layout.
+
+### ScanJSON
+
+`ScanJSON` is a `bufio.SplitFunc` that frames a stream into **top-level JSON values**:
+
+- It ignores any leading bytes before the first `{` or `[` (spaces, newlines, commas, transport delimiters…).
+- It tracks nesting and recognizes JSON strings (braces/brackets inside strings do not affect nesting).
+- If EOF happens while a JSON value is still open, it returns `io.ErrUnexpectedEOF`.
+
+This is useful when you stream JSON values and want to connect them to an `IOReaderProcessor`:
+
+```go
+scanner := bufio.NewScanner(r)
+scanner.Split(textual.ScanJSON)
+for scanner.Scan() {
+    fmt.Println(scanner.Text()) // one complete JSON value
+}
+if err := scanner.Err(); err != nil {
+    log.Fatal(err)
+}
+```
 
 ---
 

@@ -9,12 +9,15 @@
 // It also provides a minimal UTF8String helper mirroring Go's textual.String,
 // useful when you only need plain UTF‑8 text + index + error in client code.
 //
+// In addition, it provides a minimal JSON carrier (JSONCarrier) mirroring Go's
+// textual.JSON plus a scanJSON helper to split a stream into JSON values.
+//
 // It is transport-agnostic: it assumes you already receive Parcel-like JSON
 // objects (for example, from SSE, WebSocket, or fetch) and helps you manipulate
 // them in the browser.
 //
 // Usage (ES modules):
-//   import { Parcel, UTF8String, input, utf8String, EncodingID, parseEncoding, encodingName } from './textual.js';
+//   import { Parcel, UTF8String, JSONCarrier, input, utf8String, rawJSON, scanJSON, scanJSONBytes, EncodingID, parseEncoding, encodingName } from './textual.js';
 //
 //   const p = input('Hello, café');
 //   const rawParts = p.rawTexts();
@@ -138,6 +141,214 @@ function trimLineEndPunctOrSpace(line) {
     return runes.slice(0, end).join("");
 }
 
+
+
+/**
+ * scanJSON tokenizes a stream buffer into a single top-level JSON value
+ * (object `{...}` or array `[...]`).
+ *
+ * This mirrors the framing logic of Go's `ScanJSON` bufio.SplitFunc:
+ *   - Any leading bytes/chars before the first '{' or '[' are ignored (consumed).
+ *   - Nesting of objects/arrays is tracked until the matching closing delimiter.
+ *   - JSON strings are recognized; braces/brackets inside strings do NOT affect nesting.
+ *   - Escape sequences are handled so `\"` does not end a string.
+ *
+ * This helper does NOT fully validate JSON; it only provides robust framing.
+ *
+ * Important: this function works on JavaScript strings.
+ *  - `advance` is expressed in JS string indices (UTF-16 code units).
+ *  - Use `scanJSONBytes` if you work with a Uint8Array/ArrayBuffer.
+ *
+ * @param {string} data
+ * @param {boolean} atEOF
+ * @returns {{advance: number, token: (string|null), error: (Error|null)}}
+ */
+export function scanJSON(data, atEOF) {
+    const s = String(data ?? "");
+
+    // No data and nothing more to read.
+    if (atEOF && s.length === 0) {
+        return { advance: 0, token: null, error: null };
+    }
+
+    // Find the first '{' or '['. Everything before it is ignored.
+    let start = -1;
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        if (ch === '{' || ch === '[') {
+            start = i;
+            break;
+        }
+    }
+
+    if (start === -1) {
+        // No opening delimiter in the current buffer.
+        // Since we explicitly ignore leading noise, we can safely consume the
+        // whole buffer (even when !atEOF) to avoid unbounded growth.
+        return { advance: s.length, token: null, error: null };
+    }
+
+    // Consume ignored leading chars first so the caller can retry from the
+    // opening delimiter on the next iteration.
+    if (start > 0) {
+        return { advance: start, token: null, error: null };
+    }
+
+    // s[0] is '{' or '['.
+    /** @type {string[]} */
+    const stack = [s[0]];
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 1; i < s.length; i++) {
+        const ch = s[i];
+
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch === '\\\\') {
+                escaped = true;
+                continue;
+            }
+            if (ch === '"') {
+                inString = false;
+            }
+            continue;
+        }
+
+        // Outside of strings.
+        if (ch === '"') {
+            inString = true;
+            continue;
+        }
+
+        if (ch === '{' || ch === '[') {
+            stack.push(ch);
+            continue;
+        }
+
+        if (ch === '}' || ch === ']') {
+            if (stack.length === 0) {
+                return { advance: 0, token: null, error: new Error(`scanJSON: unexpected closing ${ch} at index ${i}`) };
+            }
+            const top = stack[stack.length - 1];
+            const matches = (ch === '}' && top === '{') || (ch === ']' && top === '[');
+            if (!matches) {
+                return { advance: 0, token: null, error: new Error(`scanJSON: mismatched closing ${ch} for ${top} at index ${i}`) };
+            }
+            stack.pop();
+            if (stack.length === 0) {
+                const end = i + 1;
+                return { advance: end, token: s.slice(0, end), error: null };
+            }
+        }
+    }
+
+    // Buffer ended before we found the matching closing delimiter.
+    if (atEOF) {
+        return { advance: 0, token: null, error: new Error("scanJSON: unexpected EOF") };
+    }
+    return { advance: 0, token: null, error: null };
+}
+
+/**
+ * scanJSONBytes is the byte-oriented variant of `scanJSON`.
+ *
+ * It operates on a Uint8Array and returns a Uint8Array token.
+ *
+ * - `advance` is expressed in **bytes**.
+ * - `token` is a copy of the bytes covering the JSON value.
+ *
+ * @param {Uint8Array} data
+ * @param {boolean} atEOF
+ * @returns {{advance: number, token: (Uint8Array|null), error: (Error|null)}}
+ */
+export function scanJSONBytes(data, atEOF) {
+    const buf = (data instanceof Uint8Array) ? data : new Uint8Array();
+
+    // No data and nothing more to read.
+    if (atEOF && buf.length === 0) {
+        return { advance: 0, token: null, error: null };
+    }
+
+    // Find the first '{' (0x7B) or '[' (0x5B). Everything before it is ignored.
+    let start = -1;
+    for (let i = 0; i < buf.length; i++) {
+        const b = buf[i];
+        if (b === 0x7B || b === 0x5B) {
+            start = i;
+            break;
+        }
+    }
+
+    if (start === -1) {
+        // No opening delimiter in the current buffer: consume it all.
+        return { advance: buf.length, token: null, error: null };
+    }
+
+    if (start > 0) {
+        // Consume ignored leading bytes first.
+        return { advance: start, token: null, error: null };
+    }
+
+    /** @type {number[]} */
+    const stack = [buf[0]];
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 1; i < buf.length; i++) {
+        const b = buf[i];
+
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (b === 0x5C) { // '\'
+                escaped = true;
+                continue;
+            }
+            if (b === 0x22) { // '"'
+                inString = false;
+            }
+            continue;
+        }
+
+        // Outside of strings.
+        if (b === 0x22) { // '"'
+            inString = true;
+            continue;
+        }
+
+        if (b === 0x7B || b === 0x5B) { // '{' or '['
+            stack.push(b);
+            continue;
+        }
+
+        if (b === 0x7D || b === 0x5D) { // '}' or ']'
+            if (stack.length === 0) {
+                return { advance: 0, token: null, error: new Error(`scanJSONBytes: unexpected closing 0x${b.toString(16)} at byte ${i}`) };
+            }
+            const top = stack[stack.length - 1];
+            const matches = (b === 0x7D && top === 0x7B) || (b === 0x5D && top === 0x5B);
+            if (!matches) {
+                return { advance: 0, token: null, error: new Error(`scanJSONBytes: mismatched closing 0x${b.toString(16)} for 0x${top.toString(16)} at byte ${i}`) };
+            }
+            stack.pop();
+            if (stack.length === 0) {
+                const end = i + 1;
+                return { advance: end, token: buf.slice(0, end), error: null };
+            }
+        }
+    }
+
+    if (atEOF) {
+        return { advance: 0, token: null, error: new Error("scanJSONBytes: unexpected EOF") };
+    }
+    return { advance: 0, token: null, error: null };
+}
 /**
  * Fragment represents a transformed portion of the original text.
  *
@@ -372,6 +583,193 @@ export class UTF8String {
  *   - `fragments` is an array of Fragment instances.
  *   - `error` is kept as an opaque value (usually a string) for portability.
  */
+
+
+/**
+ * JSONCarrier is the minimal "carrier" helper, mirroring Go's textual.JSON.
+ *
+ * Use it when you only need to stream raw JSON values (objects or arrays)
+ * as UTF‑8 strings, with:
+ *   - an optional ordering hint (index)
+ *   - an optional, portable error string (error)
+ *
+ * Notes:
+ *   - `value` is a string containing a single JSON value.
+ *   - No JSON parsing or validation is performed.
+ *   - `aggregate(...)` produces a JSON array string by concatenating the
+ *     contained JSON values with commas: `[v0,v1,...]`.
+ *
+ * This file intentionally does NOT export a class named `JSON` because that
+ * would shadow the global `JSON` object (breaking JSON.parse / JSON.stringify
+ * in consumer code). Use `JSONCarrier` instead.
+ */
+export class JSONCarrier {
+    /**
+     * @param {Object} opts
+     * @param {UTF8Text} [opts.value] - Raw JSON value as UTF‑8 text (e.g. `{"a":1}` or `[1,2]`).
+     * @param {number} [opts.index] - Optional index in a stream.
+     * @param {string|null} [opts.error] - Optional error string.
+     */
+    constructor({ value = '', index = 0, error = null } = {}) {
+        /** @type {UTF8Text} */
+        this.value = String(value);
+        /** @type {number} */
+        this.index = Number.isFinite(index) ? Math.trunc(index) : 0;
+        /** @type {string|null} */
+        this.error = normalizeError(error);
+    }
+
+    /**
+     * Builds a JSONCarrier from JSON.
+     *
+     * Accepts both lower-case and Go-style exported keys:
+     *   - value / Value
+     *   - index / Index
+     *   - error / Error
+     *
+     * @param {Object|JSONCarrier} json
+     * @returns {JSONCarrier}
+     */
+    static fromJSON(json) {
+        if (json instanceof JSONCarrier) {
+            return json;
+        }
+        if (!json || typeof json !== 'object') {
+            return new JSONCarrier();
+        }
+        return new JSONCarrier({
+            value: json.value ?? json.Value ?? '',
+            index: json.index ?? json.Index ?? 0,
+            error: json.error ?? json.Error ?? null
+        });
+    }
+
+    /**
+     * Serializes the value to a JSON-friendly object.
+     *
+     * @returns {{value: string, index: number, error: (string|null)}}
+     */
+    toJSON() {
+        return {
+            value: this.value,
+            index: this.index,
+            error: this.error
+        };
+    }
+
+    /**
+     * Returns the raw JSON text (Go: UTF8String()).
+     *
+     * @returns {UTF8Text}
+     */
+    utf8String() {
+        return this.value;
+    }
+
+    /**
+     * Creates a new JSONCarrier from a UTF‑8 token (Go: FromUTF8String()).
+     *
+     * @param {UTF8Text} text
+     * @returns {JSONCarrier}
+     */
+    fromUTF8String(text) {
+        return new JSONCarrier({ value: String(text), index: 0, error: null });
+    }
+
+    /**
+     * Returns a copy of the value with its index set (Go: WithIndex()).
+     *
+     * @param {number} index
+     * @returns {JSONCarrier}
+     */
+    withIndex(index) {
+        return new JSONCarrier({
+            value: this.value,
+            index: Number.isFinite(index) ? Math.trunc(index) : 0,
+            error: this.error
+        });
+    }
+
+    /**
+     * Returns the stored index (Go: GetIndex()).
+     *
+     * @returns {number}
+     */
+    getIndex() {
+        return this.index;
+    }
+
+    /**
+     * Returns a copy of the value with its error merged (Go: WithError()).
+     *
+     * @param {*} err
+     * @returns {JSONCarrier}
+     */
+    withError(err) {
+        const merged = joinErrorStrings(this.error, err);
+        return new JSONCarrier({
+            value: this.value,
+            index: this.index,
+            error: merged
+        });
+    }
+
+    /**
+     * Returns the stored error (Go: GetError()).
+     *
+     * @returns {string|null}
+     */
+    getError() {
+        return this.error;
+    }
+
+    /**
+     * Aggregates multiple JSONCarrier values into one JSON array value.
+     *
+     * Behaviour mirrors Go's textual.JSON.Aggregate intent:
+     *   - Items are copied and stably sorted by index.
+     *   - When indices are equal, value is used as a tie-breaker.
+     *   - The output index is reset to 0.
+     *   - Errors are merged into a single portable string.
+     *
+     * Important: `value` strings are inserted as-is, no JSON validation.
+     *
+     * @param {Array<JSONCarrier|Object>} items
+     * @returns {JSONCarrier}
+     */
+    aggregate(items) {
+        const list = (items || []).map((it) => JSONCarrier.fromJSON(it));
+
+        // Ensure determinism by decorating with arrival order.
+        const decorated = list.map((it, order) => ({
+            it,
+            order: Number.isFinite(order) ? order : 0
+        }));
+
+        decorated.sort((a, b) => {
+            if (a.it.index !== b.it.index) {
+                return a.it.index - b.it.index;
+            }
+            if (a.it.value !== b.it.value) {
+                return a.it.value < b.it.value ? -1 : 1;
+            }
+            return a.order - b.order;
+        });
+
+        let out = "[";
+        let err = null;
+
+        for (let i = 0; i < decorated.length; i++) {
+            if (i > 0) out += ",";
+            const it = decorated[i].it;
+            out += it.value;
+            err = joinErrorStrings(err, it.error);
+        }
+        out += "]";
+
+        return new JSONCarrier({ value: out, index: 0, error: err });
+    }
+}
 export class Parcel {
     /**
      * @param {Object} opts
@@ -977,6 +1375,26 @@ export function utf8String(text) {
     });
 }
 
+
+
+/**
+ * Convenience factory for the minimal JSONCarrier helper.
+ *
+ * Creates a base JSONCarrier with:
+ *   - value = given argument
+ *   - index = 0
+ *   - error = null
+ *
+ * @param {UTF8Text} text
+ * @returns {JSONCarrier}
+ */
+export function rawJSON(text) {
+    return new JSONCarrier({
+        value: String(text),
+        index: 0,
+        error: null
+    });
+}
 /**
  * EncodingID is an enum-like mapping of supported encodings to numeric IDs.
  *
