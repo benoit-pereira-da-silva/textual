@@ -1,10 +1,12 @@
 # Unreleased
++ Introduced `textual.Transcoder` to transcode one Type to another. 
+  + `textual.IOReaderTranscoder` connects an io.Reader to a Transcoder by scanning.
 + Added `textual.JSON` carrier, and `ScanJSON` `bufio` split function.
 + Added error support to carriers (`WithError(err error)` / `GetError() error`) so processors can report per-item failures without breaking the stream.
 + Updated documentation and comments to reflect the Carrier / Parcel terminology.
 + Updated client helpers:
-    + `helpers/js` now targets `Parcel` and includes a minimal `UTF8String` helper mirroring Go’s `textual.String`.
-    + `helpers/swift` now targets `Parcel` and includes a minimal `UTF8String` helper mirroring Go’s `textual.String`.
+  + `helpers/js` now targets `Parcel` and includes a minimal `UTF8String` helper mirroring Go’s `textual.String`.
+  + `helpers/swift` now targets `Parcel` and includes a minimal `UTF8String` helper mirroring Go’s `textual.String`.
 + Using `textual.String` in the [reverse_words example](examples/reverse_words/README.md).
 + Added `textual.String`, a minimal generic implementation of `textual.Carrier`.
 + Adapted `textual.Parcel` to implement `textual.Carrier`.

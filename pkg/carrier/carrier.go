@@ -12,12 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package textual
+package carrier
 
 // UTF8String is a symbolic alias used throughout the package.
 //
 // textual can decode / encode many legacy encodings at the boundaries, but once
-// inside the pipeline every piece of text is represented as UTF‑8.
+// inside a pipeline, every piece of text is represented as UTF‑8.
 //
 // Note: this is an alias (not a distinct type) and exists mostly for code
 // readability.
@@ -40,7 +40,7 @@ type UTF8String = string
 //
 //   - FromUTF8String creates a new carrier from a UTF‑8 token. The receiver is
 //     treated as a prototype: most code calls it on the zero value of S, so it
-//     must not rely on receiver state.
+//     must not rely on the receiver state.
 //
 //   - WithIndex / GetIndex attach and retrieve an ordering hint.
 //     IOReaderProcessor uses it to record the token sequence index. Aggregate

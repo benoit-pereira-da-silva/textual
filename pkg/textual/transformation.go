@@ -18,17 +18,19 @@ import (
 	"context"
 	"fmt"
 	"io"
+
+	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
 // Transformation binds a Processor with information about the source and
 // destination textual "nature" (dialect + encoding).
 //
 // The processing stack is generic over a carrier type S (see Carrier).
-// S represents what flows through the pipeline (for example String or Parcel).
+// S represents what flows through the pipeline (for example String or JSON).
 //
 // The generic type parameter P is the concrete Processor implementation that
 // transforms values of type S.
-type Transformation[S Carrier[S], P Processor[S]] struct {
+type Transformation[S carrier.Carrier[S], P Processor[S]] struct {
 	// Name is an arbitrary identifier for diagnostic / logging purposes.
 	Name string `json:"name"`
 
@@ -54,7 +56,7 @@ type Nature struct {
 
 // NewTransformation constructs a new Transformation instance binding a
 // processor with its input / output natures.
-func NewTransformation[S Carrier[S], P Processor[S]](name string, p P, from Nature, to Nature) *Transformation[S, P] {
+func NewTransformation[S carrier.Carrier[S], P Processor[S]](name string, p P, from Nature, to Nature) *Transformation[S, P] {
 	return &Transformation[S, P]{
 		Name:      name,
 		From:      from,
@@ -185,7 +187,7 @@ func (t Transformation[S, P]) Process(ctx context.Context, r io.ReadCloser, w io
 //
 // DecodeText does NOT close r; Process is responsible for closing the
 // ReadCloser that it receives.
-func (t Transformation[S, P]) DecodeText(r io.ReadCloser) (UTF8String, error) {
+func (t Transformation[S, P]) DecodeText(r io.ReadCloser) (carrier.UTF8String, error) {
 	s, err := ReaderToUTF8(r, t.From.EncodingID)
 	if err != nil {
 		return "", err

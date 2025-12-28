@@ -16,6 +16,8 @@ package textual
 
 import (
 	"context"
+
+	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
 // Chain is a Processor that runs multiple processors sequentially.
@@ -37,11 +39,11 @@ import (
 //
 // See also: Router for fan-out/fan-in routing and SyncApply for one-shot
 // processing.
-type Chain[S Carrier[S]] struct {
+type Chain[S carrier.Carrier[S]] struct {
 	processors []Processor[S]
 }
 
-func NewChain[S Carrier[S]](processors ...Processor[S]) *Chain[S] {
+func NewChain[S carrier.Carrier[S]](processors ...Processor[S]) *Chain[S] {
 	return &Chain[S]{
 		processors: processors,
 	}

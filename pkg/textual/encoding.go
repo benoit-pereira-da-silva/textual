@@ -21,6 +21,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/japanese"
@@ -363,14 +364,14 @@ func NewUTF8Reader(r io.Reader, src EncodingID) (io.Reader, error) {
 // ToUTF8 converts bytes (in any encoding) to UTF‑8.
 //
 // This is a convenience wrapper around ReaderToUTF8 for in‑memory data.
-func ToUTF8(input []byte, src EncodingID) (UTF8String, error) {
+func ToUTF8(input []byte, src EncodingID) (carrier.UTF8String, error) {
 	r := bytes.NewReader(input)
 	return ReaderToUTF8(r, src)
 }
 
 // ReaderToUTF8 reads all data from r, decodes it from the specified source
 // encoding, and returns it as a UTF‑8 string.
-func ReaderToUTF8(r io.Reader, src EncodingID) (UTF8String, error) {
+func ReaderToUTF8(r io.Reader, src EncodingID) (carrier.UTF8String, error) {
 	reader, err := NewUTF8Reader(r, src)
 	if err != nil {
 		return "", err
@@ -379,11 +380,11 @@ func ReaderToUTF8(r io.Reader, src EncodingID) (UTF8String, error) {
 	if err != nil {
 		return "", err
 	}
-	return UTF8String(out), nil
+	return carrier.UTF8String(out), nil
 }
 
 // FromUTF8 encodes a UTF-8 string into a target encoding.
-func FromUTF8(input UTF8String, dest EncodingID) ([]byte, error) {
+func FromUTF8(input carrier.UTF8String, dest EncodingID) ([]byte, error) {
 	var buf bytes.Buffer
 	// Reuse the streaming variant, writing into our buffer.
 	if err := FromUTF8ToWriter(input, dest, &buf); err != nil {
@@ -393,7 +394,7 @@ func FromUTF8(input UTF8String, dest EncodingID) ([]byte, error) {
 }
 
 // FromUTF8ToWriter encodes a UTF-8 into a target encoding.
-func FromUTF8ToWriter(input UTF8String, dest EncodingID, writer io.Writer) error {
+func FromUTF8ToWriter(input carrier.UTF8String, dest EncodingID, writer io.Writer) error {
 	enc, err := GetEncoding(dest)
 	if err != nil {
 		return err

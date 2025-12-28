@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"context"
 	"testing"
+
+	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
 // trackingReadCloser wraps an io.Reader and records whether Close was called.
@@ -53,8 +55,8 @@ func TestTransformationProcess_PassThrough(t *testing.T) {
 	wc := &trackingWriteCloser{}
 
 	// Echo processor: forwards every incoming Parcel as‑is.
-	echo := ProcessorFunc[Parcel](func(ctx context.Context, in <-chan Parcel) <-chan Parcel {
-		out := make(chan Parcel)
+	echo := ProcessorFunc[carrier.Parcel](func(ctx context.Context, in <-chan carrier.Parcel) <-chan carrier.Parcel {
+		out := make(chan carrier.Parcel)
 		go func() {
 			defer close(out)
 			for {
@@ -72,7 +74,7 @@ func TestTransformationProcess_PassThrough(t *testing.T) {
 		return out
 	})
 
-	tr := NewTransformation[Parcel, Processor[Parcel]](
+	tr := NewTransformation[carrier.Parcel, Processor[carrier.Parcel]](
 		"echo",
 		echo,
 		Nature{Dialect: "plain", EncodingID: UTF8},
@@ -105,10 +107,10 @@ func TestTransformationProcess_MultipleResults(t *testing.T) {
 	wc := &trackingWriteCloser{}
 
 	// This processor splits the input text into two Parcels and emits both.
-	splitting := ProcessorFunc[Parcel](func(ctx context.Context, in <-chan Parcel) <-chan Parcel {
-		out := make(chan Parcel)
+	splitting := ProcessorFunc[carrier.Parcel](func(ctx context.Context, in <-chan carrier.Parcel) <-chan carrier.Parcel {
+		out := make(chan carrier.Parcel)
 		go func() {
-			instance := Parcel{}
+			instance := carrier.Parcel{}
 			defer close(out)
 			for {
 				select {
@@ -139,7 +141,7 @@ func TestTransformationProcess_MultipleResults(t *testing.T) {
 		return out
 	})
 
-	tr := NewTransformation[Parcel, Processor[Parcel]](
+	tr := NewTransformation[carrier.Parcel, Processor[carrier.Parcel]](
 		"split",
 		splitting,
 		Nature{Dialect: "plain", EncodingID: UTF8},
