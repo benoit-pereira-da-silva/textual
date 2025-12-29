@@ -55,36 +55,17 @@ type Transcoder[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]] interface {
 // It allows plain functions to be used as Transcoder values:
 //
 //	t := TranscoderFunc[carrier.String, carrier.Parcel](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.Parcel {
-//		out := make(chan carrier.Parcel)
-//		go func() {
-//			defer close(out)
-//			proto := carrier.Parcel{}
-//			for {
-//				select {
-//				case <-ctx.Done():
-//					return
-//				case s, ok := <-in:
-//					if !ok {
-//						return
-//					}
+//		proto := carrier.Parcel{}
+//		return Async(ctx, in, func(s carrier.String) carrier.Parcel {
+//			// Convert String -> Parcel.
+//			res := proto.FromUTF8String(carrier.UTF8String("P:" + s.Value)).WithIndex(s.GetIndex())
 //
-//					// Convert String -> Parcel.
-//					res := proto.FromUTF8String(carrier.UTF8String("P:" + s.Value)).WithIndex(s.GetIndex())
-//
-//					// Preserve per-item error as data.
-//					if err := s.GetError(); err != nil {
-//						res = res.WithError(err)
-//					}
-//
-//					select {
-//					case <-ctx.Done():
-//						return
-//					case out <- res:
-//					}
-//				}
+//			// Preserve per-item error as data.
+//			if err := s.GetError(); err != nil {
+//				res = res.WithError(err)
 //			}
-//		}()
-//		return out
+//			return res
+//		})
 //	})
 //
 // This can make it easier to construct lightweight transcoders inline.

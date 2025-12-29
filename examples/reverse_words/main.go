@@ -69,7 +69,7 @@ func main() {
 	twice := flag.Bool("twice", false, "apply the reverse-words processor twice")
 	inputPath := flag.String("input", defaultExcerptPath, "path to the input text file (UTF-8)")
 	minDelay := flag.Int("min-delay", minDelayMS, "minimum delay in milliseconds before processing a token")
-	maxDelay := flag.Int("max-delay", maxDelayMS, "maximum delay in milliseconds before processing a token")
+	maxDelay := flag.Int("max-delay", maxDelayMS, "maximum delay between processed tokens in milliseconds")
 	wordByWord := flag.Bool("word-by-word", false, "use word-by-word tokenization (ScanExpression)")
 	flag.Parse()
 
@@ -100,7 +100,7 @@ func main() {
 
 	// Build the reverse-words processor; optionally chain it twice.
 	// We use a textual.String because a textual.Parcel is useless in this context.
-	//buildProcessor[textual.Parcel](*twice) works too.!
+	// buildProcessor[textual.Parcel](*twice) works too.!
 	processor := buildProcessor[carrier.String](*twice)
 
 	// Construct an IOReaderProcessor that will scan the file token-by-token and
@@ -137,67 +137,44 @@ func main() {
 // so that words are reversed twice in a row (resulting in the original text).
 func buildProcessor[S carrier.Carrier[S]](twice bool) textual.Processor[S] {
 
-	// Seed a local random source used to add a small delay between each batch
-	// of transformed text.
-	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	// makeReverseStage returns a single reverse-words stage.
+	//
+	// Each stage gets its own random source so that chaining the stage twice does
+	// not introduce shared mutable state between goroutines.
+	makeReverseStage := func() textual.Processor[S] {
+		// Seed a local random source used to add a small delay between each batch
+		// of transformed text.
+		rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	// Single reverse-words stage implemented as a ProcessorFunc.
-	reverseStage := textual.ProcessorFunc[S](func(ctx context.Context, in <-chan S) <-chan S {
-		out := make(chan S)
+		return textual.ProcessorFunc[S](func(ctx context.Context, in <-chan S) <-chan S {
+			return textual.Async(ctx, in, func(res S) S {
+				// Transform the token by reversing each word while keeping
+				// punctuation and whitespace in place.
+				transformed := reverseWords(res.UTF8String())
 
-		go func() {
-			defer close(out)
+				// Wait for a random delay between min-delay and max-delay
+				// milliseconds to simulate a streaming / progressive workload.
+				delayRange := maxDelayMS - minDelayMS + 1
+				delay := minDelayMS + rnd.Intn(delayRange)
+				time.Sleep(time.Duration(delay) * time.Millisecond)
 
-			for {
-				select {
-				case <-ctx.Done():
-					// Context cancelled: stop processing promptly.
-					return
-
-				case res, ok := <-in:
-					if !ok {
-						// Upstream closed the input channel: we are done.
-						return
-					}
-
-					// Transform the token by reversing each word while keeping
-					// punctuation and whitespace in place.
-					transformed := reverseWords(res.UTF8String())
-
-					// Wait for a random delay between min-delay and max-delay
-					// milliseconds to simulate a streaming / progressive workload.
-					delayRange := maxDelayMS - minDelayMS + 1
-					delay := minDelayMS + rnd.Intn(delayRange)
-					time.Sleep(time.Duration(delay) * time.Millisecond)
-
-					// Create a new String, preserving the index (ordering hint) and
-					// any existing per-item error.
-					outRes := res.FromUTF8String(transformed).
-						WithIndex(res.GetIndex()).
-						WithError(res.GetError())
-
-					// Forward the transformed String downstream, staying responsive
-					// to context cancellation.
-					select {
-					case <-ctx.Done():
-						return
-					case out <- outRes:
-					}
-				}
-			}
-		}()
-
-		return out
-	})
+				// Create a new carrier, preserving the index (ordering hint) and
+				// any existing per-item error.
+				return res.FromUTF8String(transformed).
+					WithIndex(res.GetIndex()).
+					WithError(res.GetError())
+			})
+		})
+	}
 
 	if !twice {
-		return reverseStage
+		return makeReverseStage()
 	}
 
 	// Chain the reverse-words processor twice. Each token is processed by the
 	// first stage, then by the second stage. Applying the same transformation
 	// twice restores the original text (modulo casing rules).
-	return textual.NewChain(reverseStage, reverseStage)
+	return textual.NewChain(makeReverseStage(), makeReverseStage())
 }
 
 /////////////////////

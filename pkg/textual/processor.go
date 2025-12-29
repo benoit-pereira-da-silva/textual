@@ -52,24 +52,11 @@ type Processor[S carrier.Carrier[S]] interface {
 //
 // It allows plain functions to be used as Processor values:
 //
-//	p := ProcessorFunc[String](func(ctx context.Context, in <-chan String) <-chan String {
-//		out := make(chan String)
-//		go func() {
-//			defer close(out)
-//			for {
-//				select {
-//				case <-ctx.Done():
-//					return
-//				case s, ok := <-in:
-//					if !ok {
-//						return
-//					}
-//					// Process s and send to out as needed.
-//					out <- s
-//				}
-//			}
-//		}()
-//		return out
+//	p := ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
+//		return Async(ctx, in, func(s carrier.String) carrier.String {
+//			s.Value = strings.ToUpper(s.Value)
+//			return s
+//		})
 //	})
 //
 // This can make it easier to construct lightweight processors inline.

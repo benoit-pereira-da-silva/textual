@@ -31,27 +31,10 @@ func TestIOReaderProcessor_Start_ScanLinesAndIndexes(t *testing.T) {
 	reader := strings.NewReader(input)
 
 	upper := ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-		out := make(chan carrier.String)
-		go func() {
-			defer close(out)
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case s, ok := <-in:
-					if !ok {
-						return
-					}
-					s.Value = strings.ToUpper(s.Value)
-					select {
-					case <-ctx.Done():
-						return
-					case out <- s:
-					}
-				}
-			}
-		}()
-		return out
+		return Async(ctx, in, func(s carrier.String) carrier.String {
+			s.Value = strings.ToUpper(s.Value)
+			return s
+		})
 	})
 
 	p := NewIOReaderProcessor[carrier.String](upper, reader)
@@ -88,26 +71,9 @@ func TestIOReaderProcessor_CustomSplit_ReconstructsInput(t *testing.T) {
 	reader := strings.NewReader(input)
 
 	identity := ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-		out := make(chan carrier.String)
-		go func() {
-			defer close(out)
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case s, ok := <-in:
-					if !ok {
-						return
-					}
-					select {
-					case <-ctx.Done():
-						return
-					case out <- s:
-					}
-				}
-			}
-		}()
-		return out
+		return Async(ctx, in, func(s carrier.String) carrier.String {
+			return s
+		})
 	})
 
 	p := NewIOReaderProcessor[carrier.String](identity, reader)

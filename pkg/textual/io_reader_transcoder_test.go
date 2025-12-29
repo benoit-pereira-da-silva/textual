@@ -32,31 +32,14 @@ func TestIOReaderTranscoder_Start_ScanLinesAndIndexes(t *testing.T) {
 
 	// String -> Parcel transcoder that prefixes and preserves index.
 	tprefix := TranscoderFunc[carrier.String, carrier.Parcel](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.Parcel {
-		out := make(chan carrier.Parcel)
-		go func() {
-			defer close(out)
-			proto := carrier.Parcel{}
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case s, ok := <-in:
-					if !ok {
-						return
-					}
-					res := proto.FromUTF8String(carrier.UTF8String("P:" + s.Value)).WithIndex(s.GetIndex())
-					if err := s.GetError(); err != nil {
-						res = res.WithError(err)
-					}
-					select {
-					case <-ctx.Done():
-						return
-					case out <- res:
-					}
-				}
+		proto := carrier.Parcel{}
+		return Async(ctx, in, func(s carrier.String) carrier.Parcel {
+			res := proto.FromUTF8String(carrier.UTF8String("P:" + s.Value)).WithIndex(s.GetIndex())
+			if err := s.GetError(); err != nil {
+				res = res.WithError(err)
 			}
-		}()
-		return out
+			return res
+		})
 	})
 
 	ioT := NewIOReaderTranscoder[carrier.String](tprefix, reader)
@@ -97,31 +80,14 @@ func TestIOReaderTranscoder_CustomSplit_ScanJSON(t *testing.T) {
 
 	// String -> JSON transcoder that preserves index.
 	toJSON := TranscoderFunc[carrier.String, carrier.JSON](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.JSON {
-		out := make(chan carrier.JSON)
-		go func() {
-			defer close(out)
-			proto := carrier.JSON{}
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case s, ok := <-in:
-					if !ok {
-						return
-					}
-					res := proto.FromUTF8String(s.UTF8String()).WithIndex(s.GetIndex())
-					if err := s.GetError(); err != nil {
-						res = res.WithError(err)
-					}
-					select {
-					case <-ctx.Done():
-						return
-					case out <- res:
-					}
-				}
+		proto := carrier.JSON{}
+		return Async(ctx, in, func(s carrier.String) carrier.JSON {
+			res := proto.FromUTF8String(s.UTF8String()).WithIndex(s.GetIndex())
+			if err := s.GetError(); err != nil {
+				res = res.WithError(err)
 			}
-		}()
-		return out
+			return res
+		})
 	})
 
 	ioT := NewIOReaderTranscoder[carrier.String](toJSON, reader)
