@@ -28,60 +28,26 @@ func TestGlue_StickLeft_ComposesTranscoderThenProcessor(t *testing.T) {
 
 	// String -> Parcel transcoder.
 	toParcel := TranscoderFunc[carrier.String, carrier.Parcel](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.Parcel {
-		out := make(chan carrier.Parcel)
-		go func() {
-			defer close(out)
+		return Async(ctx, in, func(ctx context.Context, t carrier.String) carrier.Parcel {
 			proto := carrier.Parcel{}
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case s, ok := <-in:
-					if !ok {
-						return
-					}
-					p := proto.FromUTF8String(carrier.UTF8String("P:" + s.Value)).WithIndex(s.GetIndex())
-					if err := s.GetError(); err != nil {
-						p = p.WithError(err)
-					}
-					select {
-					case <-ctx.Done():
-						return
-					case out <- p:
-					}
-				}
+			updated := proto.FromUTF8String(carrier.UTF8String("P:" + t.Value)).WithIndex(t.GetIndex())
+			if err := t.GetError(); err != nil {
+				updated = updated.WithError(err)
 			}
-		}()
-		return out
+			return updated
+		})
 	})
 
 	// Parcel -> Parcel processor.
 	appendSuffix := ProcessorFunc[carrier.Parcel](func(ctx context.Context, in <-chan carrier.Parcel) <-chan carrier.Parcel {
-		out := make(chan carrier.Parcel)
-		go func() {
-			defer close(out)
+		return Async(ctx, in, func(ctx context.Context, t carrier.Parcel) carrier.Parcel {
 			proto := carrier.Parcel{}
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case p, ok := <-in:
-					if !ok {
-						return
-					}
-					updated := proto.FromUTF8String(carrier.UTF8String(string(p.Text) + "|S")).WithIndex(p.GetIndex())
-					if err := p.GetError(); err != nil {
-						updated = updated.WithError(err)
-					}
-					select {
-					case <-ctx.Done():
-						return
-					case out <- updated:
-					}
-				}
+			updated := proto.FromUTF8String(carrier.UTF8String(string(t.Text) + "|S")).WithIndex(t.GetIndex())
+			if err := t.GetError(); err != nil {
+				updated = updated.WithError(err)
 			}
-		}()
-		return out
+			return updated
+		})
 	})
 
 	composed := StickLeft(toParcel, appendSuffix)
@@ -113,57 +79,24 @@ func TestGlue_StickRight_ComposesProcessorThenTranscoder(t *testing.T) {
 
 	// String -> String processor.
 	appendA := ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-		out := make(chan carrier.String)
-		go func() {
-			defer close(out)
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case s, ok := <-in:
-					if !ok {
-						return
-					}
-					s.Value = s.Value + "A"
-					select {
-					case <-ctx.Done():
-						return
-					case out <- s:
-					}
-				}
-			}
-		}()
-		return out
+		return Async(ctx, in, func(ctx context.Context, t carrier.String) carrier.String {
+			t.Value = t.Value + "A"
+			return t
+		})
 	})
 
 	// String -> Parcel transcoder.
 	toParcel := TranscoderFunc[carrier.String, carrier.Parcel](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.Parcel {
-		out := make(chan carrier.Parcel)
-		go func() {
-			defer close(out)
+		return Async(ctx, in, func(ctx context.Context, t carrier.String) carrier.Parcel {
 			proto := carrier.Parcel{}
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case s, ok := <-in:
-					if !ok {
-						return
-					}
-					p := proto.FromUTF8String(carrier.UTF8String("P:" + s.Value)).WithIndex(s.GetIndex())
-					if err := s.GetError(); err != nil {
-						p = p.WithError(err)
-					}
-					select {
-					case <-ctx.Done():
-						return
-					case out <- p:
-					}
-				}
+			updated := proto.FromUTF8String(carrier.UTF8String("P:" + t.Value)).WithIndex(t.GetIndex())
+			if err := t.GetError(); err != nil {
+				updated = updated.WithError(err)
 			}
-		}()
-		return out
+			return updated
+		})
 	})
+
 	composed := StickRight(appendA, toParcel)
 
 	in := make(chan carrier.String, 1)

@@ -23,61 +23,17 @@ import (
 	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
-// procSuffixString returns a Processor[String] that appends suffix to Value.
-func procSuffixString(suffix string) Processor[carrier.String] {
-	return ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-		out := make(chan carrier.String)
-		go func() {
-			defer close(out)
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case s, ok := <-in:
-					if !ok {
-						return
-					}
-					s.Value = s.Value + suffix
-					select {
-					case <-ctx.Done():
-						return
-					case out <- s:
-					}
-				}
-			}
-		}()
-		return out
-	})
-}
-
 // procSuffixParcel returns a Processor[Parcel] that appends suffix to Text.
-func procSuffixParcel(suffix string) Processor[carrier.Parcel] {
-	return ProcessorFunc[carrier.Parcel](func(ctx context.Context, in <-chan carrier.Parcel) <-chan carrier.Parcel {
-		out := make(chan carrier.Parcel)
-		go func() {
-			defer close(out)
-			proto := carrier.Parcel{}
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case p, ok := <-in:
-					if !ok {
-						return
-					}
-					updated := proto.FromUTF8String(carrier.UTF8String(string(p.Text) + suffix)).WithIndex(p.GetIndex())
-					if err := p.GetError(); err != nil {
-						updated = updated.WithError(err)
-					}
-					select {
-					case <-ctx.Done():
-						return
-					case out <- updated:
-					}
-				}
+func procSuffix(suffix string) Processor[carrier.String] {
+	return ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
+		return Async(ctx, in, func(ctx context.Context, t carrier.String) carrier.String {
+			proto := *new(carrier.String)
+			updated := proto.FromUTF8String(t.UTF8String() + suffix).WithIndex(t.GetIndex())
+			if err := t.GetError(); err != nil {
+				updated = updated.WithError(err)
 			}
-		}()
-		return out
+			return updated
+		})
 	})
 }
 
@@ -86,9 +42,9 @@ func TestChain_SequentialAndIgnoresNil(t *testing.T) {
 	defer cancel()
 
 	chain := NewChain[carrier.String](
-		procSuffixString("A"),
+		procSuffix("A"),
 		nil, // should be ignored
-		procSuffixString("B"),
+		procSuffix("B"),
 	)
 
 	in := make(chan carrier.String, 1)
@@ -166,8 +122,8 @@ func TestRouter_FirstMatchAndUnmatchedPassThrough(t *testing.T) {
 		return strings.HasPrefix(s.Value, "A")
 	}
 
-	router.AddRoute(predA, procSuffixString("|r1"))
-	router.AddRoute(predA, procSuffixString("|r2")) // should NOT receive "A..." in FirstMatch
+	router.AddRoute(predA, procSuffix("|r1"))
+	router.AddRoute(predA, procSuffix("|r2")) // should NOT receive "A..." in FirstMatch
 
 	in := make(chan carrier.String, 2)
 	outCh := router.Apply(ctx, in)
@@ -203,8 +159,8 @@ func TestRouter_BroadcastToAllEligibleRoutes(t *testing.T) {
 	predX := func(_ context.Context, s carrier.String) bool {
 		return strings.Contains(s.Value, "x")
 	}
-	router.AddRoute(predX, procSuffixString("|a"))
-	router.AddRoute(predX, procSuffixString("|b"))
+	router.AddRoute(predX, procSuffix("|a"))
+	router.AddRoute(predX, procSuffix("|b"))
 
 	in := make(chan carrier.String, 1)
 	outCh := router.Apply(ctx, in)
@@ -233,8 +189,8 @@ func TestRouter_RoundRobinDistributesAcrossRoutes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	p1 := procSuffixString("|p1")
-	p2 := procSuffixString("|p2")
+	p1 := procSuffix("|p1")
+	p2 := procSuffix("|p2")
 	router := NewRouter[carrier.String](RoutingStrategyRoundRobin, p1, p2)
 
 	in := make(chan carrier.String, 4)
