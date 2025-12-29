@@ -56,7 +56,7 @@ type Transcoder[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]] interface {
 //
 //	t := TranscoderFunc[carrier.String, carrier.Parcel](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.Parcel {
 //		proto := carrier.Parcel{}
-//		return Async(ctx, in, func(s carrier.String) carrier.Parcel {
+//		return Async(ctx, in, func(ctx context.Context, s carrier.String) carrier.Parcel {
 //			// Convert String -> Parcel.
 //			res := proto.FromUTF8String(carrier.UTF8String("P:" + s.Value)).WithIndex(s.GetIndex())
 //

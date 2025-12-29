@@ -1,6 +1,7 @@
 # Async and PanicStore (textual)
 
 This document explains how to use `textual.Async` and `textual.WithPanicStore` to build **streaming** processors and transcoders that communicate through **channels** and are interruptible via **context cancellation**.
+
 The design is intentionally “low ceremony” and close to Go’s idioms, but it is also **unforgiving** if the pipeline is not built with the required discipline.
 
 ---
@@ -41,16 +42,16 @@ It is best seen as a streaming version of `map`.
 - The output channel is **always closed** when the stage finishes.
 - The stage is **cancellation-aware**: it selects on `ctx.Done()` on both receive and send.
 - A panic inside `f` does **not crash the process**:
-    - it is recovered,
-    - stored in the panic store (when present),
-    - and the stage terminates by closing its output channel.
+  - it is recovered,
+  - stored in the panic store (when present),
+  - and the stage terminates by closing its output channel.
 
 ### What `Async` does *not* do
 
 - It does **not** parallelize the mapping function across multiple goroutines.
-    - Concurrency comes from **composition** (multiple stages running concurrently), or from building explicit worker pools (e.g. via `Router`).
+  - Concurrency comes from **composition** (multiple stages running concurrently), or from building explicit worker pools (e.g. via `Router`).
 - It does **not** magically cancel the whole pipeline on panic.
-    - Panic capture is an **out-of-band signal**. The *supervisor* must decide how to react (log, cancel, re-panic, etc.).
+  - Panic capture is an **out-of-band signal**. The *supervisor* must decide how to react (log, cancel, re-panic, etc.).
 
 ---
 
@@ -88,7 +89,7 @@ if info, ok := ps.Load(); ok {
     // - log stack
     // - return error
     // - or re-panic
-    log.Printf("panic: %v\\n%s", info.Value, info.Stack)
+    log.Printf("panic: %v\n%s", info.Value, info.Stack)
 }
 ```
 

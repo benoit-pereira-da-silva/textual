@@ -53,7 +53,7 @@ type Processor[S carrier.Carrier[S]] interface {
 // It allows plain functions to be used as Processor values:
 //
 //	p := ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-//		return Async(ctx, in, func(s carrier.String) carrier.String {
+//		return Async(ctx, in, func(ctx context.Context, s carrier.String) carrier.String {
 //			s.Value = strings.ToUpper(s.Value)
 //			return s
 //		})

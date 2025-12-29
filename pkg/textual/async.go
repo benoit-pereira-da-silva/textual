@@ -21,7 +21,7 @@ import (
 
 // Async starts a single-worker streaming "map" stage.
 //
-// It consumes values from `in`, applies `f` to each value, and sends the
+// It consumes values from `in`, applies `f(ctx, t)` to each value, and sends the
 // resulting values to the returned channel.
 //
 // Async is primarily intended as a low-ceremony building block to implement
@@ -36,8 +36,9 @@ import (
 //   - ctx is canceled (ctx.Done() is closed), OR
 //   - `in` is closed by upstream, OR
 //   - `f` panics (the panic is recovered; see "Panic handling").
-//   - Async emits at most one output for each input (1:1 mapping).
-//     If you need fan-out (1:N) or fan-in, write a custom stage or use Router.
+//   - Async emits exactly one output for each input (1:1 mapping).
+//     If you need fan-out (1:N), use AsyncEmitter. If you need fan-in, buffering,
+//     reordering, or custom flushing semantics, write a custom stage or use Router.
 //
 // -----------------------------------------------------------------------------
 // Context cancellation and interruption
@@ -54,15 +55,17 @@ import (
 //     Simply "breaking" from a for-range on the output channel without canceling
 //     can leave upstream goroutines blocked on sends.
 //
-// Because `f` does not take a context parameter, cancellation is cooperative.
-// If `f` calls APIs that accept a context, capture `ctx` in the closure:
+// Because `f` receives the stage context, it can naturally call cancellation-aware
+// APIs:
 //
-//	out := Async(ctx, in, func(v T1) T2 {
-//	    // Use ctx inside the mapping if you need cancellation-aware work.
+//	out := Async(ctx, in, func(ctx context.Context, v T1) T2 {
 //	    res, err := doSomething(ctx, v)
 //	    _ = err
 //	    return res
 //	})
+//
+// Cancellation is still cooperative: if `f` performs long CPU work without
+// checking ctx.Done() (or calling context-aware APIs), it cannot be preempted.
 //
 // -----------------------------------------------------------------------------
 // Backpressure and buffering
@@ -120,7 +123,7 @@ import (
 // Async is particularly convenient for 1:1 stages:
 //
 //	p := ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-//	    return Async(ctx, in, func(s carrier.String) carrier.String {
+//	    return Async(ctx, in, func(ctx context.Context, s carrier.String) carrier.String {
 //	        s.Value = strings.ToUpper(s.Value)
 //	        return s
 //	    })
@@ -128,7 +131,7 @@ import (
 //
 //	t := TranscoderFunc[carrier.String, carrier.Parcel](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.Parcel {
 //	    proto := carrier.Parcel{}
-//	    return Async(ctx, in, func(s carrier.String) carrier.Parcel {
+//	    return Async(ctx, in, func(ctx context.Context, s carrier.String) carrier.Parcel {
 //	        return proto.FromUTF8String("P:" + s.Value).WithIndex(s.GetIndex())
 //	    })
 //	})
@@ -150,7 +153,7 @@ import (
 // When used with those rules, Async provides predictable resource lifetime,
 // bounded memory via backpressure, simple stage composition, and panic
 // containment across goroutines.
-func Async[T1 any, T2 any](ctx context.Context, in <-chan T1, f func(t T1) T2) <-chan T2 {
+func Async[T1 any, T2 any](ctx context.Context, in <-chan T1, f func(ctx context.Context, t T1) T2) <-chan T2 {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -198,14 +201,119 @@ func Async[T1 any, T2 any](ctx context.Context, in <-chan T1, f func(t T1) T2) <
 					return
 				}
 
-				// Any panic in f(s) is recovered by the defer above.
-				res := f(s)
+				// If cancellation raced with the receive, avoid doing any more work.
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				// Any panic in f(ctx, s) is recovered by the defer above.
+				res := f(ctx, s)
 
 				select {
 				case <-ctx.Done():
 					return
 				case out <- res:
 				}
+			}
+		}
+	}()
+	return out
+}
+
+// AsyncEmitter starts a single-worker streaming "flatMap" stage (1:N).
+//
+// It consumes values from `in` and calls `f(ctx, t, emit)` for each input.
+// The provided `emit` callback can be invoked zero, one, or many times to
+// produce outputs for that input.
+//
+// AsyncEmitter follows the same streaming, cancellation, backpressure and panic
+// semantics as Async.
+//
+// -----------------------------------------------------------------------------
+// Emission contract
+//
+//   - `emit` is cancellation-aware: when ctx is done, it returns without blocking.
+//   - `emit` participates in backpressure: each call may block until a downstream
+//     receiver is ready (the output channel is unbuffered).
+//   - `emit` is intended to be used synchronously during the call to `f`.
+//     Do not retain it or call it from other goroutines unless you fully
+//     understand the lifetime, ordering, and cancellation implications.
+//
+// Like Async, AsyncEmitter never closes `in` and closes the returned channel exactly once.
+func AsyncEmitter[T1 any, T2 any](ctx context.Context, in <-chan T1, f func(ctx context.Context, t T1, emit func(T2))) <-chan T2 {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Ensure a PanicStore is present so that recovered panics are never silently
+	// dropped. If the caller didn't provide one, we attach an internal store.
+	if PanicStoreFromContext(ctx) == nil {
+		ctx, _ = WithPanicStore(ctx)
+	}
+
+	// Derive a cancellable child context so ctx.Done() is always non-nil and
+	// so we can always call cancel() on exit to release context resources.
+	ctx, cancel := context.WithCancel(ctx)
+
+	out := make(chan T2)
+	go func() {
+		defer close(out)
+
+		// Cancel the child context before closing out, so any late emit calls
+		// can observe ctx.Done() and return quickly.
+		defer cancel()
+
+		// Recover panics in this worker and store them (PanicStore is always present).
+		// The panic is swallowed: AsyncEmitter terminates the stream early by closing `out`.
+		defer func() {
+			if r := recover(); r != nil {
+				if ps := PanicStoreFromContext(ctx); ps != nil {
+					ps.Store(r, debug.Stack())
+				}
+				return
+			}
+		}()
+
+		emit := func(v T2) {
+			// Defensive recovery: if someone misuses emit (e.g. retains it and calls
+			// it after the stage has closed the channel), avoid crashing the process
+			// and surface the issue via PanicStore.
+			defer func() {
+				if r := recover(); r != nil {
+					if ps := PanicStoreFromContext(ctx); ps != nil {
+						ps.Store(r, debug.Stack())
+					}
+				}
+			}()
+
+			select {
+			case <-ctx.Done():
+				return
+			case out <- v:
+			}
+		}
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case s, ok := <-in:
+				if !ok {
+					return
+				}
+
+				// If cancellation raced with the receive, avoid doing any more work.
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+
+				// Any panic in f(ctx, s, emit) is recovered by the defer above.
+				// f may call emit zero, one, or many times.
+				f(ctx, s, emit)
 			}
 		}
 	}()

@@ -147,16 +147,30 @@ func buildProcessor[S carrier.Carrier[S]](twice bool) textual.Processor[S] {
 		rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 
 		return textual.ProcessorFunc[S](func(ctx context.Context, in <-chan S) <-chan S {
-			return textual.Async(ctx, in, func(res S) S {
+			return textual.Async(ctx, in, func(ctx context.Context, res S) S {
 				// Transform the token by reversing each word while keeping
 				// punctuation and whitespace in place.
 				transformed := reverseWords(res.UTF8String())
 
 				// Wait for a random delay between min-delay and max-delay
 				// milliseconds to simulate a streaming / progressive workload.
+				//
+				// The wait is context-aware so a canceled pipeline does not
+				// keep sleeping needlessly.
 				delayRange := maxDelayMS - minDelayMS + 1
 				delay := minDelayMS + rnd.Intn(delayRange)
-				time.Sleep(time.Duration(delay) * time.Millisecond)
+
+				timer := time.NewTimer(time.Duration(delay) * time.Millisecond)
+				defer timer.Stop()
+
+				select {
+				case <-ctx.Done():
+					// Cancellation is out-of-band: the stage will stop emitting soon.
+					// Returning any value is fine; Async will not send once ctx is done.
+					return res
+				case <-timer.C:
+					// Proceed.
+				}
 
 				// Create a new carrier, preserving the index (ordering hint) and
 				// any existing per-item error.

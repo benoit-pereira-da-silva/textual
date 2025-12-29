@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -31,7 +31,7 @@ func TestIOReaderProcessor_Start_ScanLinesAndIndexes(t *testing.T) {
 	reader := strings.NewReader(input)
 
 	upper := ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-		return Async(ctx, in, func(s carrier.String) carrier.String {
+		return Async(ctx, in, func(_ context.Context, s carrier.String) carrier.String {
 			s.Value = strings.ToUpper(s.Value)
 			return s
 		})
@@ -71,7 +71,7 @@ func TestIOReaderProcessor_CustomSplit_ReconstructsInput(t *testing.T) {
 	reader := strings.NewReader(input)
 
 	identity := ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-		return Async(ctx, in, func(s carrier.String) carrier.String {
+		return Async(ctx, in, func(_ context.Context, s carrier.String) carrier.String {
 			return s
 		})
 	})

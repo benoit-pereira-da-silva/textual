@@ -4,8 +4,6 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -33,7 +31,7 @@ func TestIOReaderTranscoder_Start_ScanLinesAndIndexes(t *testing.T) {
 	// String -> Parcel transcoder that prefixes and preserves index.
 	tprefix := TranscoderFunc[carrier.String, carrier.Parcel](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.Parcel {
 		proto := carrier.Parcel{}
-		return Async(ctx, in, func(s carrier.String) carrier.Parcel {
+		return Async(ctx, in, func(_ context.Context, s carrier.String) carrier.Parcel {
 			res := proto.FromUTF8String(carrier.UTF8String("P:" + s.Value)).WithIndex(s.GetIndex())
 			if err := s.GetError(); err != nil {
 				res = res.WithError(err)
@@ -81,7 +79,7 @@ func TestIOReaderTranscoder_CustomSplit_ScanJSON(t *testing.T) {
 	// String -> JSON transcoder that preserves index.
 	toJSON := TranscoderFunc[carrier.String, carrier.JSON](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.JSON {
 		proto := carrier.JSON{}
-		return Async(ctx, in, func(s carrier.String) carrier.JSON {
+		return Async(ctx, in, func(_ context.Context, s carrier.String) carrier.JSON {
 			res := proto.FromUTF8String(s.UTF8String()).WithIndex(s.GetIndex())
 			if err := s.GetError(); err != nil {
 				res = res.WithError(err)
