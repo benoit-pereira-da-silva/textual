@@ -1,4 +1,5 @@
 # Unreleased
++ Glue helpers function to compose a Transcoder and a Processor.
 + Introduced `textual.Transcoder` to transcode one Type to another. 
   + `textual.IOReaderTranscoder` connects an io.Reader to a Transcoder by scanning.
 + Added `textual.JSON` carrier, and `ScanJSON` `bufio` split function.

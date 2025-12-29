@@ -20,17 +20,6 @@ import (
 	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
-// Glue is a tiny composition helper for mixing Transcoder and Processor stages.
-//
-// It intentionally returns composed stages (Transcoder values) instead of wiring
-// channels directly. This keeps Glue reusable: the returned transcoder can be
-// plugged anywhere a Transcoder is expected (IOReaderTranscoder, other Glue
-// compositions, etc.).
-//
-// Note: Glue does not replace Chain/Router; it only covers the common “one
-// transcoder + one processor” composition shapes.
-type Glue[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]] struct{}
-
 // StickLeft composes:
 //
 //	Transcoder[S1,S2] then Processor[S2]  => Transcoder[S1,S2]
@@ -38,9 +27,9 @@ type Glue[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]] struct{}
 // This is useful when you first *convert* a stream (S1 -> S2) and then apply
 // additional same-type processing on S2.
 //
-// If processor is nil, StickLeft returns transcoder unchanged.
-// If transcoder is nil, StickLeft returns nil.
-func (g Glue[S1, S2]) StickLeft(transcoder Transcoder[S1, S2], processor Processor[S2]) Transcoder[S1, S2] {
+// If the processor is nil, StickLeft returns the transcoder unchanged.
+// If the transcoder is nil, StickLeft returns nil.
+func StickLeft[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]](transcoder Transcoder[S1, S2], processor Processor[S2]) Transcoder[S1, S2] {
 	if transcoder == nil {
 		return nil
 	}
@@ -63,9 +52,9 @@ func (g Glue[S1, S2]) StickLeft(transcoder Transcoder[S1, S2], processor Process
 // This is useful when you want to do some same-type processing first (S1 -> S1)
 // and only then convert to a different carrier type (S1 -> S2).
 //
-// If processor is nil, StickRight returns transcoder unchanged.
-// If transcoder is nil, StickRight returns nil.
-func (g Glue[S1, S2]) StickRight(processor Processor[S1], transcoder Transcoder[S1, S2]) Transcoder[S1, S2] {
+// If the processor is nil, StickRight returns the transcoder unchanged.
+// If the transcoder is nil, StickRight returns nil.
+func StickRight[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]](processor Processor[S1], transcoder Transcoder[S1, S2]) Transcoder[S1, S2] {
 	if transcoder == nil {
 		return nil
 	}

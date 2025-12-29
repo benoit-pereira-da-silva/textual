@@ -84,8 +84,7 @@ func TestGlue_StickLeft_ComposesTranscoderThenProcessor(t *testing.T) {
 		return out
 	})
 
-	g := Glue[carrier.String, carrier.Parcel]{}
-	composed := g.StickLeft(toParcel, appendSuffix)
+	composed := StickLeft(toParcel, appendSuffix)
 
 	in := make(chan carrier.String, 1)
 	outCh := composed.Apply(ctx, in)
@@ -165,9 +164,7 @@ func TestGlue_StickRight_ComposesProcessorThenTranscoder(t *testing.T) {
 		}()
 		return out
 	})
-
-	g := Glue[carrier.String, carrier.Parcel]{}
-	composed := g.StickRight(appendA, toParcel)
+	composed := StickRight(appendA, toParcel)
 
 	in := make(chan carrier.String, 1)
 	outCh := composed.Apply(ctx, in)
