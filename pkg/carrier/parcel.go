@@ -158,6 +158,25 @@ func (r Parcel) UTF8String() UTF8String {
 	return UTF8String(out.String())
 }
 
+func (r Parcel) WithError(err error) Parcel {
+	if err == nil {
+		return r
+	}
+	if r.Error == nil {
+		r.Error = err
+	} else {
+		r.Error = errors.Join(r.Error, err)
+	}
+	return r
+}
+func (r Parcel) GetError() error {
+	return r.Error
+}
+
+///////////////////////////////////////
+// AggregatableCarrier implementation
+///////////////////////////////////////
+
 // Aggregate concatenates the Text fields of results and rebases all fragment
 // positions into the coordinate space of the aggregated Text.
 //
@@ -197,21 +216,6 @@ func (r Parcel) Aggregate(parcels []Parcel) Parcel {
 	}
 	aggregated.Text = builder.String()
 	return aggregated
-}
-
-func (r Parcel) WithError(err error) Parcel {
-	if err == nil {
-		return r
-	}
-	if r.Error == nil {
-		r.Error = err
-	} else {
-		r.Error = errors.Join(r.Error, err)
-	}
-	return r
-}
-func (r Parcel) GetError() error {
-	return r.Error
 }
 
 /////////////////////////////////

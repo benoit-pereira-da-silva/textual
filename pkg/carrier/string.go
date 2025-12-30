@@ -58,6 +58,10 @@ func (s String) GetIndex() int {
 	return s.Index
 }
 
+///////////////////////////////////////
+// AggregatableCarrier implementation
+///////////////////////////////////////
+
 // Aggregate concatenates multiple String values into one.
 //
 // The input slice is copied and stably sorted by Index, so callers can emit

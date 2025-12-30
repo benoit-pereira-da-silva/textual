@@ -29,7 +29,7 @@ import (
 //   - N>1     : SyncApply aggregates them using S.Aggregate.
 //
 // Context cancellation is respected while reading the output channel.
-func SyncApply[S carrier.Carrier[S], P Processor[S]](ctx context.Context, p P, in S) S {
+func SyncApply[S carrier.AggregatableCarrier[S], P Processor[S]](ctx context.Context, p P, in S) S {
 	if ctx == nil {
 		ctx = context.Background()
 	}

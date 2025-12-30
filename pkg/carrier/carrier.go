@@ -46,10 +46,6 @@ type UTF8String = string
 //     IOReaderProcessor uses it to record the token sequence index. Aggregate
 //     may use it to reassemble outputs in a stable order.
 //
-//   - Aggregate combines multiple carrier values into a single value.
-//     This is used when a processor emits several outputs for one logical input
-//     (split, fan‑out/fan‑in, etc.).
-//
 //   - WithError / GetError attach and retrieve a non-fatal, per-item error.
 //     This enables processors to report recoverable issues (warnings, partial
 //     failures, fallbacks…) without breaking the stream.
@@ -67,7 +63,15 @@ type Carrier[S any] interface {
 	FromUTF8String(s UTF8String) S
 	WithIndex(index int) S
 	GetIndex() int
-	Aggregate(items []S) S
 	WithError(err error) S
 	GetError() error
+}
+
+// AggregatableCarrier adds Aggregate ability to the Carrier.
+//   - Aggregate combines multiple carrier values into a single value.
+//     This is used when a processor emits several outputs for one logical input
+//     (split, fan‑out/fan‑in, etc.).
+type AggregatableCarrier[S any] interface {
+	Carrier[S]
+	Aggregate(items []S) S
 }

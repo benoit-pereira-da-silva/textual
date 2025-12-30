@@ -57,6 +57,26 @@ func (s JSON) GetIndex() int {
 	return s.Index
 }
 
+func (s JSON) WithError(err error) JSON {
+	if err == nil {
+		return s
+	}
+	if s.Error == nil {
+		s.Error = err
+	} else {
+		s.Error = errors.Join(s.Error, err)
+	}
+	return s
+}
+
+func (s JSON) GetError() error {
+	return s.Error
+}
+
+///////////////////////////////////////
+// AggregatableCarrier implementation
+///////////////////////////////////////
+
 // Aggregate concatenates multiple JSON values into a JSON array.
 //
 // The input slice is copied and stably sorted by Index, so callers can emit
@@ -105,20 +125,4 @@ func (s JSON) Aggregate(values []JSON) JSON {
 	b.WriteString("]")
 
 	return JSON{Value: json.RawMessage(b.String()), Index: 0, Error: aggErr}
-}
-
-func (s JSON) WithError(err error) JSON {
-	if err == nil {
-		return s
-	}
-	if s.Error == nil {
-		s.Error = err
-	} else {
-		s.Error = errors.Join(s.Error, err)
-	}
-	return s
-}
-
-func (s JSON) GetError() error {
-	return s.Error
 }
