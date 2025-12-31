@@ -9,7 +9,7 @@ It focuses on:
 - **Streaming**: process text progressively as it arrives (readers, sockets, pipes, scanners…).
 - **Composition**: chain stages, route items to multiple stages, merge results.
 - **Encodings**: read/write many encodings while keeping an internal UTF‑8 representation.
-- **Metadata‑friendly**: pipelines are generic and can carry either plain strings, richer objects, or raw JSON values.
+- **Metadata‑friendly**: pipelines are generic and can carry either plain strings, richer objects, or structured payloads (JSON / CSV / XML).
 - **Error propagation**: processors can attach non‑fatal, per‑item errors to the flowing values without breaking the stream.
 
 The library is used by higher‑level projects like Tipa, but it can be used standalone in any Go program that needs robust incremental text processing.
@@ -22,16 +22,10 @@ The library is used by higher‑level projects like Tipa, but it can be used sta
 go get github.com/benoit-pereira-da-silva/textual
 ```
 
-Import the core package:
+Import the core package (pipeline primitives + built‑in carriers live together in this package):
 
 ```go
 import textual "github.com/benoit-pereira-da-silva/textual/pkg/textual"
-```
-
-Import the built‑in carriers:
-
-```go
-import "github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 ```
 
 ---
@@ -50,7 +44,7 @@ It’s an alias (not a distinct type) used for expressivity: you may decode from
 
 ### Carrier
 
-Pipelines don’t hard‑code a single “message” type. Instead, stages are generic over a carrier type `S` that implements `carrier.Carrier[S]`:
+Pipelines don’t hard‑code a single “message” type. Instead, stages are generic over a carrier type `S` that implements `textual.Carrier[S]`:
 
 ```go
 type Carrier[S any] interface {
@@ -65,9 +59,6 @@ type Carrier[S any] interface {
     WithIndex(index int) S
     GetIndex() int
 
-    // Aggregate combines multiple carrier values into a single value.
-    Aggregate(items []S) S
-
     // WithError / GetError attach and retrieve a non‑fatal processing error.
     // This lets processors report per‑item issues while keeping the stream alive.
     WithError(err error) S
@@ -79,17 +70,31 @@ This interface lets `textual`:
 
 - build a value from a scanned token (`FromUTF8String`),
 - attach ordering metadata (`WithIndex` / `GetIndex`),
-- re‑compose multiple outputs back into one (`Aggregate`),
 - render any value back to UTF‑8 (`UTF8String`),
 - propagate recoverable errors inside the data stream (`WithError` / `GetError`).
 
 **Important note about errors:** carrier errors are *data*, not control‑flow. Most of the `textual` stack does not stop when `GetError() != nil`. It is up to your processors and/or the final consumer to decide how to handle error‑carrying items (route them, log them, drop them, etc.). For fatal conditions, use context cancellation or stop producing outputs.
 
-### Built‑in carriers
+### AggregatableCarrier
 
-#### `carrier.String` (minimal)
+Some utilities (like `SyncApply`) need to merge multiple outputs back into one. For that, carriers can also implement `textual.AggregatableCarrier[S]`:
 
-Use `carrier.String` when you just want a streaming string pipeline:
+```go
+type AggregatableCarrier[S any] interface {
+    Carrier[S]
+
+    // Aggregate combines multiple carrier values into a single value.
+    Aggregate(items []S) S
+}
+```
+
+---
+
+## Built‑in carriers
+
+### `textual.StringCarrier` (minimal)
+
+Use `textual.StringCarrier` when you just want a streaming string pipeline:
 
 - `Value` carries the UTF‑8 text.
 - `Index` is optional ordering metadata (for stable aggregation).
@@ -97,9 +102,9 @@ Use `carrier.String` when you just want a streaming string pipeline:
 
 It’s the simplest way to build processors that transform tokens and emit tokens.
 
-#### `carrier.Parcel` (partial transformations + variants)
+### `textual.Parcel` (partial transformations + variants)
 
-Use `carrier.Parcel` when a processor might only transform *parts* of the input, or when it needs to expose multiple candidates.
+Use `textual.Parcel` when a processor might only transform *parts* of the input, or when it needs to expose multiple candidates.
 
 At a glance:
 
@@ -112,9 +117,9 @@ At a glance:
 - `UTF8String()` reconstructs a final string by interleaving fragments and raw segments in positional order.
 - `Error` carries optional per‑item errors (processor failures, fallbacks, warnings…).
 
-#### `carrier.JSON` (raw JSON carrier)
+### `textual.JsonCarrier` (raw JSON carrier)
 
-Use `carrier.JSON` when your pipeline should carry **raw JSON values** rather than plain text.
+Use `textual.JsonCarrier` when your pipeline should carry **raw JSON values** rather than plain text.
 
 - `Value` is the raw JSON bytes for one top‑level value (`json.RawMessage`).
 - `Index` is optional ordering metadata (for stable aggregation).
@@ -128,6 +133,59 @@ Aggregation concatenates multiple JSON values into a single JSON array:
 
 This is useful when you process a stream of JSON objects/arrays and need to “fan‑in” back into one JSON value.
 
+#### Casting JSON into a concrete type
+
+Use the helper `textual.CastJson[T]` to unmarshal a `JsonCarrier` into a Go value:
+
+```go
+obj, err := textual.CastJson[MyStruct](jsonCarrier)
+```
+
+### `textual.CsvCarrier` (raw CSV record carrier)
+
+Use `textual.CsvCarrier` when your pipeline should carry **CSV records** (one record per item).
+
+- `Value` is the raw UTF‑8 CSV record (typically *without* the trailing record separator).
+- `Index` is optional ordering metadata.
+- `Error` carries optional per‑item errors.
+
+Aggregation concatenates multiple CSV records into a single CSV text by joining records with `\n`
+(after stably sorting by `Index`).
+
+#### Parsing a CSV record into fields
+
+Use `textual.CastCsvRecord` to parse a `CsvCarrier` into a `[]string` using Go’s standard `encoding/csv` rules:
+
+```go
+fields, err := textual.CastCsvRecord(csvCarrier)
+```
+
+If you need custom delimiter/quoting rules, parse `csvCarrier.Value` yourself with an `encoding/csv.Reader`.
+
+### `textual.XmlCarrier` (raw XML element carrier)
+
+Use `textual.XmlCarrier` when your pipeline should carry **top‑level XML elements** (one complete element per item).
+
+- `Value` is the raw UTF‑8 XML fragment (typically one element, without an XML declaration).
+- `Index` is optional ordering metadata.
+- `Error` carries optional per‑item errors.
+
+Aggregation concatenates multiple elements into a single XML document by wrapping them into a container element:
+
+```xml
+<items> ... </items>
+```
+
+No extra whitespace is inserted between items.
+
+#### Unmarshaling XML into a concrete type
+
+Use the helper `textual.CastXml[T]` to unmarshal a `XmlCarrier` into a Go value:
+
+```go
+v, err := textual.CastXml[MyXMLStruct](xmlCarrier)
+```
+
 ---
 
 ## Processing stages
@@ -137,7 +195,7 @@ This is useful when you process a stream of JSON objects/arrays and need to “f
 A `Processor[S]` consumes a stream of `S` values and produces a stream of `S` values.
 
 ```go
-type Processor[S carrier.Carrier[S]] interface {
+type Processor[S textual.Carrier[S]] interface {
     Apply(ctx context.Context, in <-chan S) <-chan S
 }
 ```
@@ -145,9 +203,9 @@ type Processor[S carrier.Carrier[S]] interface {
 `ProcessorFunc` lets you write stages as plain functions:
 
 ```go
-echo := textual.ProcessorFunc[carrier.String](
-    func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-        out := make(chan carrier.String)
+echo := textual.ProcessorFunc[textual.StringCarrier](
+    func(ctx context.Context, in <-chan textual.StringCarrier) <-chan textual.StringCarrier {
+        out := make(chan textual.StringCarrier)
         go func() {
             defer close(out)
             for {
@@ -172,9 +230,9 @@ echo := textual.ProcessorFunc[carrier.String](
 Instead of aborting the whole stream, a processor can attach an error to the item:
 
 ```go
-validator := textual.ProcessorFunc[carrier.String](
-    func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-        out := make(chan carrier.String)
+validator := textual.ProcessorFunc[textual.StringCarrier](
+    func(ctx context.Context, in <-chan textual.StringCarrier) <-chan textual.StringCarrier {
+        out := make(chan textual.StringCarrier)
         go func() {
             defer close(out)
             for {
@@ -204,29 +262,12 @@ Downstream stages can inspect `GetError()` (or route based on it).
 A `Transcoder[S1,S2]` consumes a stream of `S1` and produces a stream of `S2`.
 
 ```go
-type Transcoder[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]] interface {
+type Transcoder[S1 textual.Carrier[S1], S2 textual.Carrier[S2]] interface {
     Apply(ctx context.Context, in <-chan S1) <-chan S2
 }
 ```
 
 `TranscoderFunc` is the functional adapter, just like `ProcessorFunc`.
-
-### IdentityProcessor and IdentityTranscoder
-
-`textual` includes two tiny “do nothing” stages that are useful as defaults, placeholders, and in tests:
-
-- `IdentityProcessor[S]` implements `Processor[S]` (S → S)
-- `IdentityTranscoder[S]` implements `Transcoder[S,S]` (S → S)
-
-Example:
-
-```go
-p := textual.IdentityProcessor[carrier.String]{}
-t := textual.IdentityTranscoder[carrier.String]{}
-
-out1 := p.Apply(ctx, inStrings) // passes items through unchanged
-out2 := t.Apply(ctx, inStrings) // same, but typed as a Transcoder
-```
 
 ---
 
@@ -266,13 +307,6 @@ ioProc := textual.NewIOReaderProcessor(echo, utf8Reader)
 
 `IOReaderTranscoder` is the equivalent adapter for a `Transcoder[S1,S2]`.
 
-### About “providers”
-
-The library intentionally does not introduce a separate “provider” abstraction: in Go, a producer is already naturally represented by a function or method that returns a read‑only channel.
-
-- `IOReaderProcessor.Start()` produces a `(<-chan S)`.
-- `IOReaderTranscoder.Start()` produces a `(<-chan S2)`.
-
 ---
 
 ## Composition
@@ -308,14 +342,14 @@ This keeps the public API small while avoiding deeply nested `Apply(...)` calls.
 - round‑robin
 - random
 
-Example with `carrier.Parcel` (routing based on remaining raw text and per‑item errors):
+Example with `textual.Parcel` (routing based on remaining raw text and per‑item errors):
 
 ```go
-router := textual.NewRouter[carrier.Parcel](textual.RoutingStrategyFirstMatch)
+router := textual.NewRouter[textual.Parcel](textual.RoutingStrategyFirstMatch)
 
 // 1) Errors first.
 router.AddRoute(
-    func(ctx context.Context, p carrier.Parcel) bool {
+    func(ctx context.Context, p textual.Parcel) bool {
         return p.GetError() != nil
     },
     errorHandlingProcessor,
@@ -323,7 +357,7 @@ router.AddRoute(
 
 // 2) Then items that still have unprocessed segments.
 router.AddRoute(
-    func(ctx context.Context, p carrier.Parcel) bool {
+    func(ctx context.Context, p textual.Parcel) bool {
         return len(p.RawTexts()) > 0
     },
     dictionaryProcessor,
@@ -395,6 +429,28 @@ This is useful for “word‑by‑word” streaming while preserving punctuation
 - It ignores any leading bytes before the first `{` or `[` (spaces, newlines, commas, transport delimiters…).
 - It tracks nesting and recognizes JSON strings (braces/brackets inside strings do not affect nesting).
 - If EOF happens while a JSON value is still open, it returns `io.ErrUnexpectedEOF`.
+
+### ScanCSV
+
+`ScanCSV` is a `bufio.SplitFunc` that frames a stream into **CSV records**:
+
+- It treats record separators (`\n`, `\r\n`, or `\r`) as record boundaries **only when outside quotes**.
+- It recognizes CSV escaped quotes (`""`) inside quoted fields.
+- If EOF happens while a quoted field is still open, it returns `io.ErrUnexpectedEOF`.
+
+This split func does not validate the full CSV dialect (delimiter, comments, etc.); it provides robust framing so that each token is “one record”.
+
+### ScanXML
+
+`ScanXML` is a `bufio.SplitFunc` that frames a stream into **top‑level XML elements**:
+
+- It ignores leading bytes before the first start element tag (`<name ...>`).
+- It understands and skips XML comments (`<!-- ... -->`), CDATA (`<![CDATA[ ... ]]>`),
+  processing instructions (`<? ... ?>`) and directives/doctype (`<! ... >`) while tracking nesting.
+- It returns one complete element (start tag → matching end tag) as a token.
+- If EOF happens while an element is still open, it returns `io.ErrUnexpectedEOF`.
+
+This split func is a framing helper; it is not a full validating XML parser.
 
 ---
 
