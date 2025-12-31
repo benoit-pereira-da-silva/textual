@@ -20,7 +20,7 @@ import (
 	"strings"
 )
 
-// Parcel is a Carrier and AggregatableCarrier implementation designed for partial transformations.
+// Parcel is a Carrier implementation designed for partial transformations.
 //
 // It keeps the original input (`Text`) and a set of transformed spans
 // (`Fragments`). Each fragment references a rune-based range within `Text`
@@ -171,51 +171,6 @@ func (r Parcel) WithError(err error) Parcel {
 }
 func (r Parcel) GetError() error {
 	return r.Error
-}
-
-///////////////////////////////////////
-// AggregatableCarrier implementation
-///////////////////////////////////////
-
-// Aggregate concatenates the Text fields of results and rebases all fragment
-// positions into the coordinate space of the aggregated Text.
-//
-// Errors are merged by taking the first non-nil error.
-func (r Parcel) Aggregate(parcels []Parcel) Parcel {
-	var aggregated Parcel
-	if len(parcels) == 0 {
-		return aggregated
-	}
-	var builder strings.Builder
-
-	// Precompute capacity and first error, if any.
-	totalFragments := 0
-	for _, res := range parcels {
-		totalFragments += len(res.Fragments)
-		if aggregated.Error == nil && res.Error != nil {
-			aggregated.Error = res.Error
-		}
-	}
-	aggregated.Fragments = make([]Fragment, 0, totalFragments)
-	aggregated.Index = -1
-	offset := 0 // rune offset in the aggregated Text
-
-	for _, res := range parcels {
-		textStr := res.Text
-		builder.WriteString(textStr)
-
-		// Compute the rune length for offset rebasing.
-		runeLen := len([]rune(textStr))
-
-		for _, f := range res.Fragments {
-			adjusted := f
-			adjusted.Pos += offset
-			aggregated.Fragments = append(aggregated.Fragments, adjusted)
-		}
-		offset += runeLen
-	}
-	aggregated.Text = builder.String()
-	return aggregated
 }
 
 /////////////////////////////////

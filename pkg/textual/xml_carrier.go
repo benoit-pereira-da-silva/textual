@@ -16,11 +16,9 @@ package textual
 
 import (
 	"errors"
-	"sort"
-	"strings"
 )
 
-// XmlCarrier is a minimal Carrier and AggregatableCarrier implementation that transports an
+// XmlCarrier is a minimal Carrier implementation that transports an
 // opaque XML fragment.
 //
 // Intended usage:
@@ -80,55 +78,4 @@ func (s XmlCarrier) WithError(err error) XmlCarrier {
 
 func (s XmlCarrier) GetError() error {
 	return s.Error
-}
-
-///////////////////////////////////////
-// AggregatableCarrier implementation
-///////////////////////////////////////
-
-// Aggregate concatenates multiple XML elements into a single document wrapped
-// in a container element "<items>...</items>".
-//
-// The input slice is copied and stably sorted by Index, so callers can emit
-// out-of-order fragments and still obtain a deterministic output.
-//
-// When indices are equal, the Value is used as a tie-breaker to keep the sort
-// stable and deterministic.
-//
-// Errors from all inputs are merged (using errors.Join) and attached to the
-// returned value.
-func (s XmlCarrier) Aggregate(values []XmlCarrier) XmlCarrier {
-	items := make([]XmlCarrier, len(values))
-	copy(items, values)
-
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].Index != items[j].Index {
-			return items[i].Index < items[j].Index
-		}
-		return items[i].Value < items[j].Value
-	})
-
-	const open = "<items>"
-	const close = "</items>"
-
-	total := len(open) + len(close)
-	for _, it := range items {
-		total += len(it.Value)
-	}
-
-	var b strings.Builder
-	b.Grow(total)
-
-	var aggErr error
-
-	b.WriteString(open)
-	for _, it := range items {
-		b.WriteString(string(it.Value))
-		if it.Error != nil {
-			aggErr = errors.Join(aggErr, it.Error)
-		}
-	}
-	b.WriteString(close)
-
-	return XmlCarrier{Value: b.String(), Index: 0, Error: aggErr}
 }

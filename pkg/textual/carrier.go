@@ -66,12 +66,3 @@ type Carrier[S any] interface {
 	WithError(err error) S
 	GetError() error
 }
-
-// AggregatableCarrier adds Aggregate ability to the Carrier.
-//   - Aggregate combines multiple carrier values into a single value.
-//     This is used when a processor emits several outputs for one logical input
-//     (split, fan‑out/fan‑in, etc.).
-type AggregatableCarrier[S any] interface {
-	Carrier[S]
-	Aggregate(items []S) S
-}

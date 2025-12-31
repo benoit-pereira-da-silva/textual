@@ -17,11 +17,9 @@ package textual
 import (
 	"encoding/json"
 	"errors"
-	"sort"
-	"strings"
 )
 
-// JsonCarrier is a minimal dynamic Carrier and AggregatableCarrier implementation that transports an opaque JsonCarrier value.
+// JsonCarrier is a minimal dynamic Carrier implementation that transports an opaque JsonCarrier value.
 // When the type is stable, use a generic JsonGenericCarrier
 // Else you can use JsonCarrier and cast according to context or in cascade using the facility CastJson.
 //
@@ -73,58 +71,4 @@ func (s JsonCarrier) WithError(err error) JsonCarrier {
 
 func (s JsonCarrier) GetError() error {
 	return s.Error
-}
-
-///////////////////////////////////////
-// AggregatableCarrier implementation
-///////////////////////////////////////
-
-// Aggregate concatenates multiple JsonCarrier values into a JsonCarrier array.
-//
-// The input slice is copied and stably sorted by Index, so callers can emit
-// out-of-order fragments and still obtain a deterministic output.
-//
-// When indices are equal, the Value is used as a tie-breaker to keep the sort
-// stable and deterministic.
-//
-// Errors from all inputs are merged (using errors.Join) and attached to the
-// returned value.
-func (s JsonCarrier) Aggregate(values []JsonCarrier) JsonCarrier {
-	items := make([]JsonCarrier, len(values))
-	copy(items, values)
-
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].Index != items[j].Index {
-			return items[i].Index < items[j].Index
-		}
-		return string(items[i].Value) < string(items[j].Value)
-	})
-
-	// Precompute capacity: sum of elements + brackets + commas.
-	total := 2 // '[' + ']'
-	if len(items) > 1 {
-		total += len(items) - 1 // commas
-	}
-	for _, it := range items {
-		total += len(it.Value)
-	}
-
-	var b strings.Builder
-	b.Grow(total)
-
-	var aggErr error
-
-	b.WriteString("[")
-	for i, it := range items {
-		if i > 0 {
-			b.WriteString(",")
-		}
-		b.Write(it.Value)
-		if it.Error != nil {
-			aggErr = errors.Join(aggErr, it.Error)
-		}
-	}
-	b.WriteString("]")
-
-	return JsonCarrier{Value: json.RawMessage(b.String()), Index: 0, Error: aggErr}
 }

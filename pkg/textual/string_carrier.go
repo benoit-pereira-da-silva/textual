@@ -16,11 +16,9 @@ package textual
 
 import (
 	"errors"
-	"sort"
-	"strings"
 )
 
-// StringCarrier is a simple Carrier and AggregatableCarrier implementation.
+// StringCarrier is a simple Carrier implementation.
 //
 // It is useful when you only need to stream UTF-8 text through processors and
 // you don't need partial spans, variants, or per-token metadata beyond an
@@ -56,50 +54,6 @@ func (s StringCarrier) WithIndex(idx int) StringCarrier {
 
 func (s StringCarrier) GetIndex() int {
 	return s.Index
-}
-
-///////////////////////////////////////
-// AggregatableCarrier implementation
-///////////////////////////////////////
-
-// Aggregate concatenates multiple StringCarrier values into one.
-//
-// The input slice is copied and stably sorted by Index, so callers can emit
-// out-of-order fragments and still obtain a deterministic output.
-//
-// When indices are equal, the Value is used as a tie-breaker to keep the sort
-// stable and deterministic.
-//
-// Errors from all inputs are merged (using errors.Join) and attached to the
-// returned value.
-func (s StringCarrier) Aggregate(stringers []StringCarrier) StringCarrier {
-	items := make([]StringCarrier, len(stringers))
-	copy(items, stringers)
-
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].Index != items[j].Index {
-			return items[i].Index < items[j].Index
-		}
-		return items[i].Value < items[j].Value
-	})
-
-	total := 0
-	for _, it := range items {
-		total += len(it.Value)
-	}
-
-	var b strings.Builder
-	b.Grow(total)
-
-	var aggErr error
-	for _, it := range items {
-		b.WriteString(it.Value)
-		if it.Error != nil {
-			aggErr = errors.Join(aggErr, it.Error)
-		}
-	}
-
-	return StringCarrier{Value: b.String(), Index: 0, Error: aggErr}
 }
 
 func (s StringCarrier) WithError(err error) StringCarrier {

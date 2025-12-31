@@ -13,7 +13,6 @@
 + Added `textual.String`, a minimal generic implementation of `textual.Carrier`.
 + Adapted `textual.Parcel` to implement `textual.Carrier`.
 + Exposed a generic interface `textual.Carrier`, and refactored the processing stack.
-+ Added `SyncApply`.
 + `textual.UTF8String` is now a symbolic string alias.
 + [Textual.swift](helpers/swift/README.md) a lightweight Swift utility to work with `textual` objects in native  clients.
 + [textual.js](helpers/js/README.md) a lightweight ES6 utility to work with `textual`  objects in the browser.

@@ -75,19 +75,6 @@ This interface lets `textual`:
 
 **Important note about errors:** carrier errors are *data*, not control‑flow. Most of the `textual` stack does not stop when `GetError() != nil`. It is up to your processors and/or the final consumer to decide how to handle error‑carrying items (route them, log them, drop them, etc.). For fatal conditions, use context cancellation or stop producing outputs.
 
-### AggregatableCarrier
-
-Some utilities (like `SyncApply`) need to merge multiple outputs back into one. For that, carriers can also implement `textual.AggregatableCarrier[S]`:
-
-```go
-type AggregatableCarrier[S any] interface {
-    Carrier[S]
-
-    // Aggregate combines multiple carrier values into a single value.
-    Aggregate(items []S) S
-}
-```
-
 ---
 
 ## Built‑in carriers

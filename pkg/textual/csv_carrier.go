@@ -16,11 +16,9 @@ package textual
 
 import (
 	"errors"
-	"sort"
-	"strings"
 )
 
-// CsvCarrier is a minimal Carrier and AggregatableCarrier implementation that transports an
+// CsvCarrier is a minimal Carrier implementation that transports an
 // opaque CSV record value.
 //
 // Semantics (mirrors JsonCarrier's role for JSON):
@@ -81,55 +79,4 @@ func (s CsvCarrier) WithError(err error) CsvCarrier {
 
 func (s CsvCarrier) GetError() error {
 	return s.Error
-}
-
-///////////////////////////////////////
-// AggregatableCarrier implementation
-///////////////////////////////////////
-
-// Aggregate concatenates multiple CSV records into a multi-record CSV text.
-//
-// The input slice is copied and stably sorted by Index, so callers can emit
-// out-of-order fragments and still obtain a deterministic output.
-//
-// When indices are equal, the Value is used as a tie-breaker to keep the sort
-// stable and deterministic.
-//
-// Errors from all inputs are merged (using errors.Join) and attached to the
-// returned value.
-func (s CsvCarrier) Aggregate(records []CsvCarrier) CsvCarrier {
-	items := make([]CsvCarrier, len(records))
-	copy(items, records)
-
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].Index != items[j].Index {
-			return items[i].Index < items[j].Index
-		}
-		return items[i].Value < items[j].Value
-	})
-
-	// Capacity: sum of record sizes + separators.
-	total := 0
-	if len(items) > 1 {
-		total += len(items) - 1 // '\n' separators
-	}
-	for _, it := range items {
-		total += len(it.Value)
-	}
-
-	var b strings.Builder
-	b.Grow(total)
-
-	var aggErr error
-	for i, it := range items {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		b.WriteString(string(it.Value))
-		if it.Error != nil {
-			aggErr = errors.Join(aggErr, it.Error)
-		}
-	}
-
-	return CsvCarrier{Value: b.String(), Index: 0, Error: aggErr}
 }

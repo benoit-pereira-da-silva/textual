@@ -1,23 +1,28 @@
 // textual.js
-// Lightweight ES6 utilities to work with "textual" Parcel objects in a browser.
+// Lightweight ES6 utilities to work with "textual" carriers in a browser.
 //
 // This file mirrors the behavior of the Go "textual" package for:
 //   - Parcel.RawTexts()
 //   - Parcel.UTF8String() (exposed here as render()/utf8String())
 // and exposes an EncodingID map plus helpers similar to encoding.go.
 //
-// It also provides a minimal UTF8String helper mirroring Go's textual.String,
-// useful when you only need plain UTF‑8 text + index + error in client code.
+// It also provides a minimal UTF8String carrier mirroring Go's textual.StringCarrier,
+// useful when you only need plain UTF-8 text + index + error in client code.
 //
-// In addition, it provides a minimal JSON carrier (JSONCarrier) mirroring Go's
-// textual.JSON plus a scanJSON helper to split a stream into JSON values.
+// In addition, it provides a minimal JsonCarrier mirroring Go's textual.JsonCarrier
+// plus scanJSON helpers to split a stream into top-level JSON values.
 //
 // It is transport-agnostic: it assumes you already receive Parcel-like JSON
 // objects (for example, from SSE, WebSocket, or fetch) and helps you manipulate
 // them in the browser.
 //
 // Usage (ES modules):
-//   import { Parcel, UTF8String, JSONCarrier, input, utf8String, rawJSON, scanJSON, scanJSONBytes, EncodingID, parseEncoding, encodingName } from './textual.js';
+//   import {
+//     Parcel, UTF8String, JsonCarrier,
+//     input, utf8String, jsonFrom,
+//     scanJSON, scanJSONBytes,
+//     EncodingID, parseEncoding, encodingName
+//   } from './textual.js';
 //
 //   const p = input('Hello, café');
 //   const rawParts = p.rawTexts();
@@ -25,6 +30,9 @@
 //
 //   const s = utf8String('plain text');
 //   console.log(s.utf8String());
+//
+//   const j = jsonFrom('{"a":1}');
+//   console.log(j.utf8String());
 //
 // Copyright 2026 Benoit Pereira da Silva
 //
@@ -55,7 +63,7 @@
  * @returns {string|null}
  */
 function normalizeError(err) {
-    if (err === null || typeof err === 'undefined') {
+    if (err === null || typeof err === "undefined") {
         return null;
     }
     if (err instanceof Error) {
@@ -141,8 +149,6 @@ function trimLineEndPunctOrSpace(line) {
     return runes.slice(0, end).join("");
 }
 
-
-
 /**
  * scanJSON tokenizes a stream buffer into a single top-level JSON value
  * (object `{...}` or array `[...]`).
@@ -175,16 +181,14 @@ export function scanJSON(data, atEOF) {
     let start = -1;
     for (let i = 0; i < s.length; i++) {
         const ch = s[i];
-        if (ch === '{' || ch === '[') {
+        if (ch === "{" || ch === "[") {
             start = i;
             break;
         }
     }
 
     if (start === -1) {
-        // No opening delimiter in the current buffer.
-        // Since we explicitly ignore leading noise, we can safely consume the
-        // whole buffer (even when !atEOF) to avoid unbounded growth.
+        // No opening delimiter in the current buffer: consume it all.
         return { advance: s.length, token: null, error: null };
     }
 
@@ -208,33 +212,33 @@ export function scanJSON(data, atEOF) {
                 escaped = false;
                 continue;
             }
-            if (ch === '\\\\') {
+            if (ch === "\\") {
                 escaped = true;
                 continue;
             }
-            if (ch === '"') {
+            if (ch === "\"") {
                 inString = false;
             }
             continue;
         }
 
         // Outside of strings.
-        if (ch === '"') {
+        if (ch === "\"") {
             inString = true;
             continue;
         }
 
-        if (ch === '{' || ch === '[') {
+        if (ch === "{" || ch === "[") {
             stack.push(ch);
             continue;
         }
 
-        if (ch === '}' || ch === ']') {
+        if (ch === "}" || ch === "]") {
             if (stack.length === 0) {
                 return { advance: 0, token: null, error: new Error(`scanJSON: unexpected closing ${ch} at index ${i}`) };
             }
             const top = stack[stack.length - 1];
-            const matches = (ch === '}' && top === '{') || (ch === ']' && top === '[');
+            const matches = (ch === "}" && top === "{") || (ch === "]" && top === "[");
             if (!matches) {
                 return { advance: 0, token: null, error: new Error(`scanJSON: mismatched closing ${ch} for ${top} at index ${i}`) };
             }
@@ -349,6 +353,7 @@ export function scanJSONBytes(data, atEOF) {
     }
     return { advance: 0, token: null, error: null };
 }
+
 /**
  * Fragment represents a transformed portion of the original text.
  *
@@ -364,13 +369,7 @@ export class Fragment {
      * @param {number} [opts.confidence] - Optional confidence value.
      * @param {number} [opts.variant] - Optional variant index for multiple candidates.
      */
-    constructor({
-                    transformed = '',
-                    pos = 0,
-                    len = 0,
-                    confidence = 0,
-                    variant = 0
-                } = {}) {
+    constructor({ transformed = "", pos = 0, len = 0, confidence = 0, variant = 0 } = {}) {
         /** @type {UTF8Text} */
         this.transformed = String(transformed);
         /** @type {number} */
@@ -397,7 +396,7 @@ export class RawText {
      * @param {number} [opts.pos] - First code-point position in the original text.
      * @param {number} [opts.len] - Length in code points.
      */
-    constructor({ text = '', pos = 0, len = 0 } = {}) {
+    constructor({ text = "", pos = 0, len = 0 } = {}) {
         /** @type {UTF8Text} */
         this.text = String(text);
         /** @type {number} */
@@ -408,10 +407,10 @@ export class RawText {
 }
 
 /**
- * UTF8String is the minimal "carrier" helper, mirroring Go's textual.String.
+ * UTF8String is the minimal "carrier" helper, mirroring Go's textual.StringCarrier.
  *
  * Use it when you only need:
- *   - a UTF‑8 string (value)
+ *   - a UTF-8 string (value)
  *   - an optional ordering hint (index)
  *   - an optional, portable error string (error)
  *
@@ -421,11 +420,11 @@ export class RawText {
 export class UTF8String {
     /**
      * @param {Object} opts
-     * @param {UTF8Text} [opts.value] - UTF‑8 text.
+     * @param {UTF8Text} [opts.value] - UTF-8 text.
      * @param {number} [opts.index] - Optional index in a stream.
      * @param {string|null} [opts.error] - Optional error string.
      */
-    constructor({ value = '', index = 0, error = null } = {}) {
+    constructor({ value = "", index = 0, error = null } = {}) {
         /** @type {UTF8Text} */
         this.value = String(value);
         /** @type {number} */
@@ -446,16 +445,12 @@ export class UTF8String {
      * @returns {UTF8String}
      */
     static fromJSON(json) {
-        if (json instanceof UTF8String) {
-            return json;
-        }
-        if (!json || typeof json !== 'object') {
-            return new UTF8String();
-        }
+        if (json instanceof UTF8String) return json;
+        if (!json || typeof json !== "object") return new UTF8String();
         return new UTF8String({
-            value: json.value ?? json.Value ?? '',
+            value: json.value ?? json.Value ?? "",
             index: json.index ?? json.Index ?? 0,
-            error: json.error ?? json.Error ?? null
+            error: json.error ?? json.Error ?? null,
         });
     }
 
@@ -465,15 +460,11 @@ export class UTF8String {
      * @returns {{value: string, index: number, error: (string|null)}}
      */
     toJSON() {
-        return {
-            value: this.value,
-            index: this.index,
-            error: this.error
-        };
+        return { value: this.value, index: this.index, error: this.error };
     }
 
     /**
-     * Returns the UTF‑8 text (Go: UTF8String()).
+     * Returns the UTF-8 text (Go: UTF8String()).
      *
      * @returns {UTF8Text}
      */
@@ -482,7 +473,7 @@ export class UTF8String {
     }
 
     /**
-     * Creates a new UTF8String from a UTF‑8 token (Go: FromUTF8String()).
+     * Creates a new UTF8String from a UTF-8 token (Go: FromUTF8String()).
      *
      * @param {UTF8Text} text
      * @returns {UTF8String}
@@ -501,7 +492,7 @@ export class UTF8String {
         return new UTF8String({
             value: this.value,
             index: Number.isFinite(index) ? Math.trunc(index) : 0,
-            error: this.error
+            error: this.error,
         });
     }
 
@@ -522,11 +513,7 @@ export class UTF8String {
      */
     withError(err) {
         const merged = joinErrorStrings(this.error, err);
-        return new UTF8String({
-            value: this.value,
-            index: this.index,
-            error: merged
-        });
+        return new UTF8String({ value: this.value, index: this.index, error: merged });
     }
 
     /**
@@ -541,7 +528,7 @@ export class UTF8String {
     /**
      * Aggregates multiple UTF8String values into one.
      *
-     * Behaviour mirrors Go's textual.String.Aggregate:
+     * Behaviour mirrors Go's textual.StringCarrier.Aggregate:
      *   - Items are copied and stably sorted by index.
      *   - When indices are equal, value is used as a tie-breaker.
      *   - The output index is reset to 0.
@@ -554,14 +541,11 @@ export class UTF8String {
         const list = (items || []).map((it) => UTF8String.fromJSON(it));
 
         list.sort((a, b) => {
-            if (a.index !== b.index) {
-                return a.index - b.index;
-            }
-            // Tie-breaker for deterministic ordering.
+            if (a.index !== b.index) return a.index - b.index;
             return a.value < b.value ? -1 : a.value > b.value ? 1 : 0;
         });
 
-        let out = '';
+        let out = "";
         let err = null;
         for (const it of list) {
             out += it.value;
@@ -572,24 +556,10 @@ export class UTF8String {
 }
 
 /**
- * Parcel is the rich value in the textual pipeline.
- *
- * It mirrors the Go struct (textual.Parcel) and supports:
- *   - rawTexts(): compute the untouched spans of the original text
- *   - render(): merge fragments and raw text back into a single string
- *
- * In JavaScript:
- *   - `text` is a UTF‑8 string.
- *   - `fragments` is an array of Fragment instances.
- *   - `error` is kept as an opaque value (usually a string) for portability.
- */
-
-
-/**
- * JSONCarrier is the minimal "carrier" helper, mirroring Go's textual.JSON.
+ * JsonCarrier is the minimal "carrier" helper, mirroring Go's textual.JsonCarrier.
  *
  * Use it when you only need to stream raw JSON values (objects or arrays)
- * as UTF‑8 strings, with:
+ * as UTF-8 strings, with:
  *   - an optional ordering hint (index)
  *   - an optional, portable error string (error)
  *
@@ -598,19 +568,15 @@ export class UTF8String {
  *   - No JSON parsing or validation is performed.
  *   - `aggregate(...)` produces a JSON array string by concatenating the
  *     contained JSON values with commas: `[v0,v1,...]`.
- *
- * This file intentionally does NOT export a class named `JSON` because that
- * would shadow the global `JSON` object (breaking JSON.parse / JSON.stringify
- * in consumer code). Use `JSONCarrier` instead.
  */
-export class JSONCarrier {
+export class JsonCarrier {
     /**
      * @param {Object} opts
-     * @param {UTF8Text} [opts.value] - Raw JSON value as UTF‑8 text (e.g. `{"a":1}` or `[1,2]`).
+     * @param {UTF8Text} [opts.value] - Raw JSON value as UTF-8 text (e.g. `{"a":1}` or `[1,2]`).
      * @param {number} [opts.index] - Optional index in a stream.
      * @param {string|null} [opts.error] - Optional error string.
      */
-    constructor({ value = '', index = 0, error = null } = {}) {
+    constructor({ value = "", index = 0, error = null } = {}) {
         /** @type {UTF8Text} */
         this.value = String(value);
         /** @type {number} */
@@ -620,27 +586,23 @@ export class JSONCarrier {
     }
 
     /**
-     * Builds a JSONCarrier from JSON.
+     * Builds a JsonCarrier from JSON.
      *
      * Accepts both lower-case and Go-style exported keys:
      *   - value / Value
      *   - index / Index
      *   - error / Error
      *
-     * @param {Object|JSONCarrier} json
-     * @returns {JSONCarrier}
+     * @param {Object|JsonCarrier} json
+     * @returns {JsonCarrier}
      */
     static fromJSON(json) {
-        if (json instanceof JSONCarrier) {
-            return json;
-        }
-        if (!json || typeof json !== 'object') {
-            return new JSONCarrier();
-        }
-        return new JSONCarrier({
-            value: json.value ?? json.Value ?? '',
+        if (json instanceof JsonCarrier) return json;
+        if (!json || typeof json !== "object") return new JsonCarrier();
+        return new JsonCarrier({
+            value: json.value ?? json.Value ?? "",
             index: json.index ?? json.Index ?? 0,
-            error: json.error ?? json.Error ?? null
+            error: json.error ?? json.Error ?? null,
         });
     }
 
@@ -650,11 +612,7 @@ export class JSONCarrier {
      * @returns {{value: string, index: number, error: (string|null)}}
      */
     toJSON() {
-        return {
-            value: this.value,
-            index: this.index,
-            error: this.error
-        };
+        return { value: this.value, index: this.index, error: this.error };
     }
 
     /**
@@ -667,26 +625,26 @@ export class JSONCarrier {
     }
 
     /**
-     * Creates a new JSONCarrier from a UTF‑8 token (Go: FromUTF8String()).
+     * Creates a new JsonCarrier from a UTF-8 token (Go: FromUTF8String()).
      *
      * @param {UTF8Text} text
-     * @returns {JSONCarrier}
+     * @returns {JsonCarrier}
      */
     fromUTF8String(text) {
-        return new JSONCarrier({ value: String(text), index: 0, error: null });
+        return new JsonCarrier({ value: String(text), index: 0, error: null });
     }
 
     /**
      * Returns a copy of the value with its index set (Go: WithIndex()).
      *
      * @param {number} index
-     * @returns {JSONCarrier}
+     * @returns {JsonCarrier}
      */
     withIndex(index) {
-        return new JSONCarrier({
+        return new JsonCarrier({
             value: this.value,
             index: Number.isFinite(index) ? Math.trunc(index) : 0,
-            error: this.error
+            error: this.error,
         });
     }
 
@@ -703,15 +661,11 @@ export class JSONCarrier {
      * Returns a copy of the value with its error merged (Go: WithError()).
      *
      * @param {*} err
-     * @returns {JSONCarrier}
+     * @returns {JsonCarrier}
      */
     withError(err) {
         const merged = joinErrorStrings(this.error, err);
-        return new JSONCarrier({
-            value: this.value,
-            index: this.index,
-            error: merged
-        });
+        return new JsonCarrier({ value: this.value, index: this.index, error: merged });
     }
 
     /**
@@ -724,9 +678,9 @@ export class JSONCarrier {
     }
 
     /**
-     * Aggregates multiple JSONCarrier values into one JSON array value.
+     * Aggregates multiple JsonCarrier values into one JSON array value.
      *
-     * Behaviour mirrors Go's textual.JSON.Aggregate intent:
+     * Behaviour mirrors Go's textual.JsonCarrier.Aggregate:
      *   - Items are copied and stably sorted by index.
      *   - When indices are equal, value is used as a tie-breaker.
      *   - The output index is reset to 0.
@@ -734,25 +688,18 @@ export class JSONCarrier {
      *
      * Important: `value` strings are inserted as-is, no JSON validation.
      *
-     * @param {Array<JSONCarrier|Object>} items
-     * @returns {JSONCarrier}
+     * @param {Array<JsonCarrier|Object>} items
+     * @returns {JsonCarrier}
      */
     aggregate(items) {
-        const list = (items || []).map((it) => JSONCarrier.fromJSON(it));
+        const list = (items || []).map((it) => JsonCarrier.fromJSON(it));
 
-        // Ensure determinism by decorating with arrival order.
-        const decorated = list.map((it, order) => ({
-            it,
-            order: Number.isFinite(order) ? order : 0
-        }));
+        // Stable tie-breaker (arrival order) for deterministic output.
+        const decorated = list.map((it, order) => ({ it, order: Number.isFinite(order) ? order : 0 }));
 
         decorated.sort((a, b) => {
-            if (a.it.index !== b.it.index) {
-                return a.it.index - b.it.index;
-            }
-            if (a.it.value !== b.it.value) {
-                return a.it.value < b.it.value ? -1 : 1;
-            }
+            if (a.it.index !== b.it.index) return a.it.index - b.it.index;
+            if (a.it.value !== b.it.value) return a.it.value < b.it.value ? -1 : 1;
             return a.order - b.order;
         });
 
@@ -767,26 +714,37 @@ export class JSONCarrier {
         }
         out += "]";
 
-        return new JSONCarrier({ value: out, index: 0, error: err });
+        return new JsonCarrier({ value: out, index: 0, error: err });
     }
 }
+
+/**
+ * Parcel is the rich value in the textual pipeline.
+ *
+ * It mirrors the Go struct (textual.Parcel) and supports:
+ *   - rawTexts(): compute the untouched spans of the original text
+ *   - render(): merge fragments and raw text back into a single string
+ *
+ * In JavaScript:
+ *   - `text` is a UTF-8 string.
+ *   - `fragments` is an array of Fragment instances.
+ *   - `error` is kept as an opaque value (usually a string) for portability.
+ */
 export class Parcel {
     /**
      * @param {Object} opts
      * @param {number} [opts.index] - Optional index in a stream.
-     * @param {UTF8Text} [opts.text] - Original UTF‑8 text.
+     * @param {UTF8Text} [opts.text] - Original UTF-8 text.
      * @param {Array<Fragment|Object>} [opts.fragments] - Fragments describing transformed regions.
      * @param {*} [opts.error] - Optional error; not interpreted by this module.
      */
-    constructor({ index = -1, text = '', fragments = [], error = null } = {}) {
+    constructor({ index = -1, text = "", fragments = [], error = null } = {}) {
         /** @type {number} */
         this.index = Number.isFinite(index) ? Math.trunc(index) : -1;
         /** @type {UTF8Text} */
         this.text = String(text);
         /** @type {Fragment[]} */
-        this.fragments = (fragments || []).map((f) =>
-            f instanceof Fragment ? f : new Fragment(f)
-        );
+        this.fragments = (fragments || []).map((f) => (f instanceof Fragment ? f : new Fragment(f)));
         /** @type {*} */
         this.error = error;
     }
@@ -799,17 +757,13 @@ export class Parcel {
      * @returns {Parcel}
      */
     static fromJSON(json) {
-        if (json instanceof Parcel) {
-            return json;
-        }
-        if (!json || typeof json !== 'object') {
-            return new Parcel();
-        }
+        if (json instanceof Parcel) return json;
+        if (!json || typeof json !== "object") return new Parcel();
         return new Parcel({
             index: json.index ?? json.Index ?? -1,
-            text: json.text ?? json.Text ?? '',
+            text: json.text ?? json.Text ?? "",
             fragments: json.fragments ?? json.Fragments ?? [],
-            error: json.error ?? json.Error ?? null
+            error: json.error ?? json.Error ?? null,
         });
     }
 
@@ -839,9 +793,9 @@ export class Parcel {
                 pos: f.pos,
                 len: f.len,
                 confidence: f.confidence,
-                variant: f.variant
+                variant: f.variant,
             })),
-            error: this.error
+            error: this.error,
         };
     }
 
@@ -852,12 +806,7 @@ export class Parcel {
      * @returns {Parcel}
      */
     withIndex(index) {
-        return new Parcel({
-            index: Number.isFinite(index) ? Math.trunc(index) : -1,
-            text: this.text,
-            fragments: this.fragments,
-            error: this.error
-        });
+        return new Parcel({ index: Number.isFinite(index) ? Math.trunc(index) : -1, text: this.text, fragments: this.fragments, error: this.error });
     }
 
     /**
@@ -882,12 +831,7 @@ export class Parcel {
         const a = normalizeError(this.error);
         const b = normalizeError(err);
         const merged = joinErrorStrings(a, b);
-        return new Parcel({
-            index: this.index,
-            text: this.text,
-            fragments: this.fragments,
-            error: merged ?? this.error ?? err
-        });
+        return new Parcel({ index: this.index, text: this.text, fragments: this.fragments, error: merged ?? this.error ?? err });
     }
 
     /**
@@ -900,7 +844,7 @@ export class Parcel {
     }
 
     /**
-     * Carrier-like convenience: builds a new Parcel from a UTF‑8 token.
+     * Carrier-like convenience: builds a new Parcel from a UTF-8 token.
      *
      * @param {UTF8Text} text
      * @returns {Parcel}
@@ -916,12 +860,7 @@ export class Parcel {
      * @returns {Parcel}
      */
     withFragments(fragments) {
-        return new Parcel({
-            index: this.index,
-            text: this.text,
-            fragments: fragments || [],
-            error: this.error
-        });
+        return new Parcel({ index: this.index, text: this.text, fragments: fragments || [], error: this.error });
     }
 
     /**
@@ -937,21 +876,14 @@ export class Parcel {
         const bestByRange = new Map();
 
         const pickBetter = (a, b) => {
-            // Prefer higher confidence
-            if (a.confidence !== b.confidence) {
-                return a.confidence > b.confidence ? a : b;
-            }
-            // Prefer lower variant index (stable UI expectations)
-            if (a.variant !== b.variant) {
-                return a.variant < b.variant ? a : b;
-            }
-            // Deterministic tie-breaker
+            if (a.confidence !== b.confidence) return a.confidence > b.confidence ? a : b;
+            if (a.variant !== b.variant) return a.variant < b.variant ? a : b;
             const at = String(a.transformed);
             const bt = String(b.transformed);
             return at <= bt ? a : b;
         };
 
-        for (const f of (this.fragments || [])) {
+        for (const f of this.fragments || []) {
             if (!f || !Number.isFinite(f.pos) || !Number.isFinite(f.len)) continue;
             const pos = Math.trunc(f.pos);
             const len = Math.trunc(f.len);
@@ -966,13 +898,12 @@ export class Parcel {
             bestByRange.set(key, pickBetter(cur, f));
         }
 
-        // Emit a deterministic order by position.
         const chosen = Array.from(bestByRange.values()).map((f) => new Fragment({
             transformed: f.transformed,
             pos: f.pos,
             len: f.len,
             confidence: f.confidence,
-            variant: f.variant
+            variant: f.variant,
         }));
 
         chosen.sort((a, b) => {
@@ -981,12 +912,7 @@ export class Parcel {
             return a.variant - b.variant;
         });
 
-        return new Parcel({
-            index: this.index,
-            text: this.text,
-            fragments: chosen,
-            error: this.error
-        });
+        return new Parcel({ index: this.index, text: this.text, fragments: chosen, error: this.error });
     }
 
     /**
@@ -1011,29 +937,18 @@ export class Parcel {
         const variantPolicy = String(opts.variantPolicy ?? "default");
         const normalizeWhitespaceOnlyLines = !!opts.normalizeWhitespaceOnlyLines;
 
-        // trimLineEnd supports both the legacy boolean as well as a safe string mode.
         const trimLineEndOpt = opts.trimLineEnd;
         const trimMode = (() => {
             if (trimLineEndOpt === true) return "punctOrSpace";
-            if (trimLineEndOpt === false || trimLineEndOpt === null || typeof trimLineEndOpt === "undefined") {
-                return "none";
-            }
+            if (trimLineEndOpt === false || trimLineEndOpt === null || typeof trimLineEndOpt === "undefined") return "none";
             const v = String(trimLineEndOpt).trim().toLowerCase();
             if (v === "" || v === "none" || v === "off" || v === "false") return "none";
-            if (v === "spaces" || v === "space" || v === "spacesonly" || v === "spaceonly" || v === "whitespace") {
-                return "spaces";
-            }
-            if (v === "punct" || v === "punctorSpace" || v === "punctor_space" || v === "punctorspace") {
-                return "punctOrSpace";
-            }
-            // Backward-compatible fallback: treat unknown truthy values like "true".
+            if (v === "spaces" || v === "space" || v === "spacesonly" || v === "spaceonly" || v === "whitespace") return "spaces";
+            if (v === "punct" || v === "punctorSpace" || v === "punctor_space" || v === "punctorspace") return "punctOrSpace";
             return "punctOrSpace";
         })();
 
-        const base = (variantPolicy === "bestConfidence")
-            ? this.bestConfidenceVariantByRange()
-            : this;
-
+        const base = (variantPolicy === "bestConfidence") ? this.bestConfidenceVariantByRange() : this;
         const rendered = base.render();
 
         if (trimMode === "none" && !normalizeWhitespaceOnlyLines) {
@@ -1056,13 +971,9 @@ export class Parcel {
                 continue;
             }
 
-            if (trimMode === "spaces") {
-                finalLines.push(trimLineEndSpace(outLine));
-            } else if (trimMode === "punctOrSpace") {
-                finalLines.push(trimLineEndPunctOrSpace(outLine));
-            } else {
-                finalLines.push(outLine);
-            }
+            if (trimMode === "spaces") finalLines.push(trimLineEndSpace(outLine));
+            else if (trimMode === "punctOrSpace") finalLines.push(trimLineEndPunctOrSpace(outLine));
+            else finalLines.push(outLine);
         }
 
         return finalLines.join("\n");
@@ -1071,104 +982,50 @@ export class Parcel {
     /**
      * Computes the non-transformed segments of the original Text.
      *
-     * Behaviour is intentionally aligned with the Go implementation:
-     *
-     *   - If there are no fragments, returns a single RawText covering the whole
-     *     text (in code points).
-     *   - Fragments are copied, sorted by pos, and treated as a union of ranges.
-     *     Overlapping fragments or multiple variants at the same pos are merged
-     *     via a moving cursor.
-     *   - Zero-length fragments and fragments fully outside the text are ignored.
-     *   - Out-of-range fragment bounds are clamped to [0, len(TextInCodePoints)].
-     *
-     * Positions and lengths are interpreted in code points (Array.from-based),
-     * which corresponds to Go runes for UTF-8 strings.
+     * Behaviour is intentionally aligned with the Go implementation.
      *
      * @returns {RawText[]} array of RawText segments.
      */
     rawTexts() {
         const raw = [];
-
-        // Work in code-point space (Array.from uses the string iterator, which is
-        // based on Unicode code points, not UTF-16 code units).
         const codePoints = Array.from(this.text);
         const textLen = codePoints.length;
 
-        if (textLen === 0) {
-            return raw;
-        }
+        if (textLen === 0) return raw;
 
         if (!this.fragments || this.fragments.length === 0) {
-            raw.push(
-                new RawText({
-                    text: this.text,
-                    pos: 0,
-                    len: textLen
-                })
-            );
+            raw.push(new RawText({ text: this.text, pos: 0, len: textLen }));
             return raw;
         }
 
-        // Copy and sort fragments by start position, tie-breaking by length, in
-        // order to compute the union of covered ranges in a single pass.
         const fragments = this.fragments.slice().sort((a, b) => {
-            if (a.pos === b.pos) {
-                return a.len - b.len;
-            }
+            if (a.pos === b.pos) return a.len - b.len;
             return a.pos - b.pos;
         });
 
         let cursor = 0;
 
         for (const f of fragments) {
-            if (!f || f.len <= 0) {
-                continue;
-            }
+            if (!f || f.len <= 0) continue;
 
             let start = f.pos;
             let end = f.pos + f.len;
 
-            // Clamp fragment bounds to [0, textLen]
             if (!Number.isFinite(start)) start = 0;
             if (!Number.isFinite(end)) end = start;
 
-            if (start < 0) {
-                start = 0;
-            }
-            if (start >= textLen) {
-                // Starts beyond the end of the text: nothing to do.
-                continue;
-            }
-            if (end > textLen) {
-                end = textLen;
-            }
+            if (start < 0) start = 0;
+            if (start >= textLen) continue;
+            if (end > textLen) end = textLen;
 
-            // Any gap between cursor and the start of the fragment is raw text.
             if (cursor < start) {
-                raw.push(
-                    new RawText({
-                        text: codePoints.slice(cursor, start).join(''),
-                        pos: cursor,
-                        len: start - cursor
-                    })
-                );
+                raw.push(new RawText({ text: codePoints.slice(cursor, start).join(""), pos: cursor, len: start - cursor }));
             }
-
-            // Advance the cursor to the end of the fragment, never backwards.
-            if (cursor < end) {
-                cursor = end;
-            }
+            if (cursor < end) cursor = end;
         }
 
-        // Trailing text after the last fragment is also raw.
         if (cursor < textLen) {
-            raw.push(
-                new RawText({
-                    text: codePoints.slice(cursor, textLen).join(''),
-                    pos: cursor,
-                    len: textLen - cursor
-                })
-            );
+            raw.push(new RawText({ text: codePoints.slice(cursor, textLen).join(""), pos: cursor, len: textLen - cursor }));
         }
 
         return raw;
@@ -1178,32 +1035,17 @@ export class Parcel {
      * Reconstructs a single output string by merging transformed fragments and
      * raw text segments according to their positions.
      *
-     * Rules (matching the Go UTF8String/Render behaviour):
-     *   - Both fragments and raw texts reference absolute positions in the
-     *     original string.
-     *   - All segments (fragments + raw) are collected with their start pos.
-     *   - Segments are sorted by pos to restore the original sequence.
-     *   - Fragment output uses Fragment.transformed.
-     *   - RawText output uses RawText.text.
-     *   - No further transformation is applied to the text content.
-     *
      * If multiple fragments share the same starting position, only the first
-     * one (in the original fragments array) is used, which is consistent with
-     * the Go implementation.
+     * one (in the fragments array) is used, which is consistent with the Go implementation.
      *
      * @returns {UTF8Text}
      */
     render() {
-        /**
-         * @typedef {{pos: number, text: UTF8Text}} Segment
-         */
-        /** @type {Segment[]} */
+        /** @type {{pos: number, text: UTF8Text}[]} */
         const segments = [];
 
         const rawTexts = this.rawTexts();
 
-        // Convert fragments into segments. Only one fragment per starting
-        // position is emitted (the first one in the fragments array).
         /** @type {Set<number>} */
         const seenFragPos = new Set();
         if (Array.isArray(this.fragments)) {
@@ -1211,31 +1053,19 @@ export class Parcel {
                 if (!f) continue;
                 const pos = Number.isFinite(f.pos) ? Math.trunc(f.pos) : 0;
                 if (seenFragPos.has(pos)) continue;
-
                 seenFragPos.add(pos);
-                segments.push({
-                    pos,
-                    text: String(f.transformed)
-                });
+                segments.push({ pos, text: String(f.transformed) });
             }
         }
 
-        // Convert raw text segments into segments as well.
         for (const raw of rawTexts) {
-            segments.push({
-                pos: Number.isFinite(raw.pos) ? Math.trunc(raw.pos) : 0,
-                text: String(raw.text)
-            });
+            segments.push({ pos: Number.isFinite(raw.pos) ? Math.trunc(raw.pos) : 0, text: String(raw.text) });
         }
 
-        // Sort by position to ensure correct ordering.
         segments.sort((a, b) => a.pos - b.pos);
 
-        // Merge segments into the final output string.
-        let out = '';
-        for (const seg of segments) {
-            out += seg.text;
-        }
+        let out = "";
+        for (const seg of segments) out += seg.text;
         return out;
     }
 
@@ -1252,20 +1082,13 @@ export class Parcel {
      * Aggregates multiple parcels into a single parcel by concatenating their
      * `text` fields and offsetting fragment positions.
      *
-     * This is a convenience that mirrors the intent of Go Carrier.Aggregate for
-     * the Parcel shape:
-     *   - texts are concatenated in the provided order
-     *   - fragment positions are shifted by the code-point length of the
-     *     preceding texts
-     *   - errors are merged into a single portable string when possible
-     *
      * @param {Parcel[]} parcels
      * @returns {Parcel}
      */
     aggregate(parcels) {
         const list = (parcels || []).map((p) => Parcel.fromJSON(p));
 
-        let text = '';
+        let text = "";
         let offset = 0;
         /** @type {Fragment[]} */
         const fragments = [];
@@ -1275,22 +1098,18 @@ export class Parcel {
             const pText = String(p.text);
             const pLen = Array.from(pText).length;
 
-            // Merge errors.
             err = joinErrorStrings(err, p.error);
 
-            // Copy fragments with shifted positions.
             if (Array.isArray(p.fragments)) {
                 for (const f of p.fragments) {
                     if (!f) continue;
-                    fragments.push(
-                        new Fragment({
-                            transformed: f.transformed,
-                            pos: (Number.isFinite(f.pos) ? Math.trunc(f.pos) : 0) + offset,
-                            len: Number.isFinite(f.len) ? Math.trunc(f.len) : 0,
-                            confidence: Number.isFinite(f.confidence) ? f.confidence : 0,
-                            variant: Number.isFinite(f.variant) ? Math.trunc(f.variant) : 0
-                        })
-                    );
+                    fragments.push(new Fragment({
+                        transformed: f.transformed,
+                        pos: (Number.isFinite(f.pos) ? Math.trunc(f.pos) : 0) + offset,
+                        len: Number.isFinite(f.len) ? Math.trunc(f.len) : 0,
+                        confidence: Number.isFinite(f.confidence) ? f.confidence : 0,
+                        variant: Number.isFinite(f.variant) ? Math.trunc(f.variant) : 0,
+                    }));
                 }
             }
 
@@ -1298,116 +1117,80 @@ export class Parcel {
             offset += pLen;
         }
 
-        return new Parcel({
-            index: -1,
-            text,
-            fragments,
-            error: err
-        });
+        return new Parcel({ index: -1, text, fragments, error: err });
     }
 
     /**
      * Aggregates multiple parcels into a single parcel by sorting the inputs by their index.
      *
-     * This is the streaming-friendly variant of aggregate():
-     *  - Parcels are parsed and then stably sorted by index.
-     *  - When indices are equal, original arrival order is preserved.
-     *
      * @param {Array<Parcel|Object>} parcels
      * @returns {Parcel}
      */
     aggregateByIndex(parcels) {
-        const decorated = (parcels || []).map((p, order) => ({
-            p: Parcel.fromJSON(p),
-            order: Number.isFinite(order) ? order : 0
-        }));
+        const decorated = (parcels || []).map((p, order) => ({ p: Parcel.fromJSON(p), order: Number.isFinite(order) ? order : 0 }));
 
         decorated.sort((a, b) => {
             const ia = Number.isFinite(a.p.index) ? a.p.index : -1;
             const ib = Number.isFinite(b.p.index) ? b.p.index : -1;
-
             if (ia !== ib) return ia - ib;
             return a.order - b.order;
         });
 
-        const sorted = decorated.map((x) => x.p);
-        return this.aggregate(sorted);
+        return this.aggregate(decorated.map((x) => x.p));
     }
 }
 
 /**
- * Convenience factory mirroring the "create from UTF‑8 text" pattern.
- *
- * Creates a base Parcel with:
- *   - index = -1
- *   - text = given argument
- *   - fragments = []
- *   - error = null
+ * Convenience factory mirroring the "create from UTF-8 text" pattern.
  *
  * @param {UTF8Text} text
  * @returns {Parcel}
  */
 export function input(text) {
-    return new Parcel({
-        index: -1,
-        text: String(text),
-        fragments: [],
-        error: null
-    });
+    return new Parcel({ index: -1, text: String(text), fragments: [], error: null });
 }
 
 /**
  * Convenience factory for the minimal UTF8String carrier helper.
  *
- * Creates a base UTF8String with:
- *   - value = given argument
- *   - index = 0
- *   - error = null
- *
  * @param {UTF8Text} text
  * @returns {UTF8String}
  */
 export function utf8String(text) {
-    return new UTF8String({
-        value: String(text),
-        index: 0,
-        error: null
-    });
+    return new UTF8String({ value: String(text), index: 0, error: null });
 }
-
-
 
 /**
- * Convenience factory for the minimal JSONCarrier helper.
- *
- * Creates a base JSONCarrier with:
- *   - value = given argument
- *   - index = 0
- *   - error = null
+ * Convenience factory for the minimal JsonCarrier helper.
  *
  * @param {UTF8Text} text
- * @returns {JSONCarrier}
+ * @returns {JsonCarrier}
+ */
+export function jsonFrom(text) {
+    return new JsonCarrier({ value: String(text), index: 0, error: null });
+}
+
+/**
+ * Backward-compatible alias (older docs used rawJSON / JSONCarrier).
+ *
+ * Prefer `jsonFrom(...)` and `JsonCarrier`.
+ *
+ * @deprecated
  */
 export function rawJSON(text) {
-    return new JSONCarrier({
-        value: String(text),
-        index: 0,
-        error: null
-    });
+    return jsonFrom(text);
 }
+
+/**
+ * @deprecated
+ * Backward-compatible alias for older code.
+ */
+export const JSONCarrier = JsonCarrier;
+
 /**
  * EncodingID is an enum-like mapping of supported encodings to numeric IDs.
  *
- * The numeric values follow the same ordering as the Go iota-based enum:
- *
- *   0  UTF8
- *   1  UTF16LE
- *   2  UTF16BE
- *   3  UTF16LEBOM
- *   4  UTF16BEBOM
- *   5  ISO8859_1
- *   ...
- *   40 EUCKR
+ * The numeric values follow the same ordering as the Go iota-based enum.
  */
 export const EncodingID = Object.freeze({
     UTF8: 0,
@@ -1458,127 +1241,119 @@ export const EncodingID = Object.freeze({
 
     Big5: 39,
 
-    EUCKR: 40
+    EUCKR: 40,
 });
 
 /**
  * Canonical encoding names by EncodingID, mirroring EncodingName() in Go.
- *
- * Keys are numeric EncodingID values, values are canonical strings such as
- * "UTF-8", "ISO-8859-1", ...
  */
 export const EncodingIdToCanonicalName = Object.freeze({
-    [EncodingID.UTF8]: 'UTF-8',
-    [EncodingID.UTF16LE]: 'UTF-16LE',
-    [EncodingID.UTF16BE]: 'UTF-16BE',
-    [EncodingID.UTF16LEBOM]: 'UTF-16LE-BOM',
-    [EncodingID.UTF16BEBOM]: 'UTF-16BE-BOM',
+    [EncodingID.UTF8]: "UTF-8",
+    [EncodingID.UTF16LE]: "UTF-16LE",
+    [EncodingID.UTF16BE]: "UTF-16BE",
+    [EncodingID.UTF16LEBOM]: "UTF-16LE-BOM",
+    [EncodingID.UTF16BEBOM]: "UTF-16BE-BOM",
 
-    [EncodingID.ISO8859_1]: 'ISO-8859-1',
-    [EncodingID.ISO8859_2]: 'ISO-8859-2',
-    [EncodingID.ISO8859_3]: 'ISO-8859-3',
-    [EncodingID.ISO8859_4]: 'ISO-8859-4',
-    [EncodingID.ISO8859_5]: 'ISO-8859-5',
-    [EncodingID.ISO8859_6]: 'ISO-8859-6',
-    [EncodingID.ISO8859_7]: 'ISO-8859-7',
-    [EncodingID.ISO8859_8]: 'ISO-8859-8',
-    [EncodingID.ISO8859_9]: 'ISO-8859-9',
-    [EncodingID.ISO8859_10]: 'ISO-8859-10',
-    [EncodingID.ISO8859_13]: 'ISO-8859-13',
-    [EncodingID.ISO8859_14]: 'ISO-8859-14',
-    [EncodingID.ISO8859_15]: 'ISO-8859-15',
-    [EncodingID.ISO8859_16]: 'ISO-8859-16',
+    [EncodingID.ISO8859_1]: "ISO-8859-1",
+    [EncodingID.ISO8859_2]: "ISO-8859-2",
+    [EncodingID.ISO8859_3]: "ISO-8859-3",
+    [EncodingID.ISO8859_4]: "ISO-8859-4",
+    [EncodingID.ISO8859_5]: "ISO-8859-5",
+    [EncodingID.ISO8859_6]: "ISO-8859-6",
+    [EncodingID.ISO8859_7]: "ISO-8859-7",
+    [EncodingID.ISO8859_8]: "ISO-8859-8",
+    [EncodingID.ISO8859_9]: "ISO-8859-9",
+    [EncodingID.ISO8859_10]: "ISO-8859-10",
+    [EncodingID.ISO8859_13]: "ISO-8859-13",
+    [EncodingID.ISO8859_14]: "ISO-8859-14",
+    [EncodingID.ISO8859_15]: "ISO-8859-15",
+    [EncodingID.ISO8859_16]: "ISO-8859-16",
 
-    [EncodingID.KOI8R]: 'KOI8-R',
-    [EncodingID.KOI8U]: 'KOI8-U',
+    [EncodingID.KOI8R]: "KOI8-R",
+    [EncodingID.KOI8U]: "KOI8-U",
 
-    [EncodingID.Windows874]: 'Windows-874',
-    [EncodingID.Windows1250]: 'Windows-1250',
-    [EncodingID.Windows1251]: 'Windows-1251',
-    [EncodingID.Windows1252]: 'Windows-1252',
-    [EncodingID.Windows1253]: 'Windows-1253',
-    [EncodingID.Windows1254]: 'Windows-1254',
-    [EncodingID.Windows1255]: 'Windows-1255',
-    [EncodingID.Windows1256]: 'Windows-1256',
-    [EncodingID.Windows1257]: 'Windows-1257',
-    [EncodingID.Windows1258]: 'Windows-1258',
+    [EncodingID.Windows874]: "Windows-874",
+    [EncodingID.Windows1250]: "Windows-1250",
+    [EncodingID.Windows1251]: "Windows-1251",
+    [EncodingID.Windows1252]: "Windows-1252",
+    [EncodingID.Windows1253]: "Windows-1253",
+    [EncodingID.Windows1254]: "Windows-1254",
+    [EncodingID.Windows1255]: "Windows-1255",
+    [EncodingID.Windows1256]: "Windows-1256",
+    [EncodingID.Windows1257]: "Windows-1257",
+    [EncodingID.Windows1258]: "Windows-1258",
 
-    [EncodingID.MacRoman]: 'MacRoman',
-    [EncodingID.MacCyrillic]: 'MacCyrillic',
+    [EncodingID.MacRoman]: "MacRoman",
+    [EncodingID.MacCyrillic]: "MacCyrillic",
 
-    [EncodingID.ShiftJIS]: 'ShiftJIS',
-    [EncodingID.EUCJP]: 'EUC-JP',
-    [EncodingID.ISO2022JP]: 'ISO-2022-JP',
+    [EncodingID.ShiftJIS]: "ShiftJIS",
+    [EncodingID.EUCJP]: "EUC-JP",
+    [EncodingID.ISO2022JP]: "ISO-2022-JP",
 
-    [EncodingID.GBK]: 'GBK',
-    [EncodingID.HZGB2312]: 'HZ-GB2312',
-    [EncodingID.GB18030]: 'GB18030',
+    [EncodingID.GBK]: "GBK",
+    [EncodingID.HZGB2312]: "HZ-GB2312",
+    [EncodingID.GB18030]: "GB18030",
 
-    [EncodingID.Big5]: 'Big5',
+    [EncodingID.Big5]: "Big5",
 
-    [EncodingID.EUCKR]: 'EUC-KR'
+    [EncodingID.EUCKR]: "EUC-KR",
 });
 
 /**
  * Dictionary equivalent to the Go map[string]EncodingID (nameToEncoding).
- *
- * Keys are lower-case, trimmed encoding names, including common aliases:
- *   "utf-8", "utf8", "shift-jis", "shiftjis", "gb18030", ...
- *
- * Values are EncodingID numeric codes.
  */
 export const EncodingNameToId = Object.freeze({
-    'utf-8': EncodingID.UTF8,
-    'utf8': EncodingID.UTF8,
-    'utf-16le': EncodingID.UTF16LE,
-    'utf-16be': EncodingID.UTF16BE,
-    'utf-16le-bom': EncodingID.UTF16LEBOM,
-    'utf-16be-bom': EncodingID.UTF16BEBOM,
+    "utf-8": EncodingID.UTF8,
+    "utf8": EncodingID.UTF8,
+    "utf-16le": EncodingID.UTF16LE,
+    "utf-16be": EncodingID.UTF16BE,
+    "utf-16le-bom": EncodingID.UTF16LEBOM,
+    "utf-16be-bom": EncodingID.UTF16BEBOM,
 
-    'iso-8859-1': EncodingID.ISO8859_1,
-    'iso-8859-2': EncodingID.ISO8859_2,
-    'iso-8859-3': EncodingID.ISO8859_3,
-    'iso-8859-4': EncodingID.ISO8859_4,
-    'iso-8859-5': EncodingID.ISO8859_5,
-    'iso-8859-6': EncodingID.ISO8859_6,
-    'iso-8859-7': EncodingID.ISO8859_7,
-    'iso-8859-8': EncodingID.ISO8859_8,
-    'iso-8859-9': EncodingID.ISO8859_9,
-    'iso-8859-10': EncodingID.ISO8859_10,
-    'iso-8859-13': EncodingID.ISO8859_13,
-    'iso-8859-14': EncodingID.ISO8859_14,
-    'iso-8859-15': EncodingID.ISO8859_15,
-    'iso-8859-16': EncodingID.ISO8859_16,
+    "iso-8859-1": EncodingID.ISO8859_1,
+    "iso-8859-2": EncodingID.ISO8859_2,
+    "iso-8859-3": EncodingID.ISO8859_3,
+    "iso-8859-4": EncodingID.ISO8859_4,
+    "iso-8859-5": EncodingID.ISO8859_5,
+    "iso-8859-6": EncodingID.ISO8859_6,
+    "iso-8859-7": EncodingID.ISO8859_7,
+    "iso-8859-8": EncodingID.ISO8859_8,
+    "iso-8859-9": EncodingID.ISO8859_9,
+    "iso-8859-10": EncodingID.ISO8859_10,
+    "iso-8859-13": EncodingID.ISO8859_13,
+    "iso-8859-14": EncodingID.ISO8859_14,
+    "iso-8859-15": EncodingID.ISO8859_15,
+    "iso-8859-16": EncodingID.ISO8859_16,
 
-    'koi8-r': EncodingID.KOI8R,
-    'koi8-u': EncodingID.KOI8U,
+    "koi8-r": EncodingID.KOI8R,
+    "koi8-u": EncodingID.KOI8U,
 
-    'windows-874': EncodingID.Windows874,
-    'windows-1250': EncodingID.Windows1250,
-    'windows-1251': EncodingID.Windows1251,
-    'windows-1252': EncodingID.Windows1252,
-    'windows-1253': EncodingID.Windows1253,
-    'windows-1254': EncodingID.Windows1254,
-    'windows-1255': EncodingID.Windows1255,
-    'windows-1256': EncodingID.Windows1256,
-    'windows-1257': EncodingID.Windows1257,
-    'windows-1258': EncodingID.Windows1258,
+    "windows-874": EncodingID.Windows874,
+    "windows-1250": EncodingID.Windows1250,
+    "windows-1251": EncodingID.Windows1251,
+    "windows-1252": EncodingID.Windows1252,
+    "windows-1253": EncodingID.Windows1253,
+    "windows-1254": EncodingID.Windows1254,
+    "windows-1255": EncodingID.Windows1255,
+    "windows-1256": EncodingID.Windows1256,
+    "windows-1257": EncodingID.Windows1257,
+    "windows-1258": EncodingID.Windows1258,
 
-    'macroman': EncodingID.MacRoman,
-    'maccyrillic': EncodingID.MacCyrillic,
+    "macroman": EncodingID.MacRoman,
+    "maccyrillic": EncodingID.MacCyrillic,
 
-    'shiftjis': EncodingID.ShiftJIS,
-    'shift-jis': EncodingID.ShiftJIS,
-    'euc-jp': EncodingID.EUCJP,
-    'iso-2022-jp': EncodingID.ISO2022JP,
+    "shiftjis": EncodingID.ShiftJIS,
+    "shift-jis": EncodingID.ShiftJIS,
+    "euc-jp": EncodingID.EUCJP,
+    "iso-2022-jp": EncodingID.ISO2022JP,
 
-    'gbk': EncodingID.GBK,
-    'hz-gb2312': EncodingID.HZGB2312,
-    'gb18030': EncodingID.GB18030,
+    "gbk": EncodingID.GBK,
+    "hz-gb2312": EncodingID.HZGB2312,
+    "gb18030": EncodingID.GB18030,
 
-    'big5': EncodingID.Big5,
+    "big5": EncodingID.Big5,
 
-    'euc-kr': EncodingID.EUCKR
+    "euc-kr": EncodingID.EUCKR,
 });
 
 /**
@@ -1591,13 +1366,12 @@ export const EncodingNameToId = Object.freeze({
  */
 export function encodingName(id) {
     const name = EncodingIdToCanonicalName[id];
-    return name || 'Unknown';
+    return name || "Unknown";
 }
 
 /**
  * Parses a name into an EncodingID, mirroring ParseEncoding(name string)
- * from Go. The lookup is case-insensitive and ignores leading/trailing
- * whitespace.
+ * from Go.
  *
  * Throws an Error when the encoding is unknown.
  *
@@ -1607,7 +1381,7 @@ export function encodingName(id) {
 export function parseEncoding(name) {
     const key = String(name).trim().toLowerCase();
     const id = EncodingNameToId[key];
-    if (typeof id === 'undefined') {
+    if (typeof id === "undefined") {
         throw new Error(`unknown encoding: ${name}`);
     }
     return id;

@@ -1,7 +1,7 @@
 //
 // Textual.swift
 //
-// Lightweight Swift utilities to work with "textual" Parcel objects in
+// Lightweight Swift utilities to work with "textual" carriers in
 // client-side code (iOS, macOS, watchOS, tvOS).
 //
 // This file mirrors the behaviour of the Go "textual" package for:
@@ -12,10 +12,12 @@
 // and exposes the same EncodingID catalogue and name lookup helpers as
 // encoding.go.
 //
-// It also provides a minimal UTF8String helper mirroring Go's textual.String,
-// useful when you only need plain UTF‑8 text + index + error in client code.
+// It also provides a minimal UTF8String carrier mirroring Go's textual.StringCarrier,
+// useful when you only need plain UTF-8 text + index + error in client code.
 //
-// In addition, it provides a minimal JSON carrier mirroring Go's textual.JSON
+// In addition, it provides:
+//   - JsonCarrier (mirrors Go's textual.JsonCarrier)
+//   - JsonGenericCarrier<T> (mirrors Go's textual.JsonGenericCarrier[T])
 // plus a scanJSON tokenizer helper to split a byte stream into JSON values.
 //
 // It is transport-agnostic: it assumes you already receive Parcel-like JSON
@@ -46,19 +48,37 @@ import Foundation
 /// for clarity in APIs.
 public typealias UTF8Text = String
 
-// MARK: - Minimal carrier: UTF8String (mirrors Go textual.String)
+// MARK: - Shared helpers
 
-/// UTF8String is the minimal "carrier" helper, mirroring Go's `textual.String`.
+private func normalizeError(_ err: String?) -> String? {
+    guard let err = err?.trimmingCharacters(in: .whitespacesAndNewlines), !err.isEmpty else {
+        return nil
+    }
+    return err
+}
+
+private func joinErrors(_ a: String?, _ b: String?) -> String? {
+    let aa = normalizeError(a)
+    let bb = normalizeError(b)
+    if aa == nil { return bb }
+    if bb == nil { return aa }
+    if aa == bb { return aa }
+    return (aa ?? "") + "; " + (bb ?? "")
+}
+
+// MARK: - Minimal carrier: UTF8String (mirrors Go textual.StringCarrier)
+
+/// UTF8String is the minimal "carrier" helper, mirroring Go's `textual.StringCarrier`.
 ///
 /// Use it when you only need:
-///   - a UTF‑8 string (`value`)
+///   - a UTF-8 string (`value`)
 ///   - an optional ordering hint (`index`)
 ///   - an optional, portable error string (`error`)
 ///
 /// This helper is intentionally small and does NOT implement Parcel-like
 /// fragment logic.
 public struct UTF8String: Codable, Equatable {
-    /// The UTF‑8 text.
+    /// The UTF-8 text.
     public var value: UTF8Text
 
     /// Optional index in a stream.
@@ -68,23 +88,21 @@ public struct UTF8String: Codable, Equatable {
     public var error: String?
 
     public init(
-        value: UTF8Text,
-        index: Int = 0,
-        error: String? = nil
+    value: UTF8Text,
+    index: Int = 0,
+    error: String? = nil
     ) {
         self.value = value
         self.index = index
         self.error = error
     }
 
-    /// Returns the UTF‑8 text (Go: UTF8String()).
+    /// Returns the UTF-8 text (Go: UTF8String()).
     public func utf8String() -> UTF8Text {
         return value
     }
 
-    /// Creates a new UTF8String from a UTF‑8 token (Go: FromUTF8String()).
-    ///
-    /// The Swift helper keeps this as a value-level constructor for convenience.
+    /// Creates a new UTF8String from a UTF-8 token (Go: FromUTF8String()).
     public func fromUTF8String(_ text: UTF8Text) -> UTF8String {
         return UTF8String(value: text, index: 0, error: nil)
     }
@@ -106,17 +124,8 @@ public struct UTF8String: Codable, Equatable {
     /// Errors are stored as plain strings for portability. When multiple errors
     /// are attached, they are concatenated with `; `.
     public func withError(_ err: String?) -> UTF8String {
-        guard let err = err?.trimmingCharacters(in: .whitespacesAndNewlines), !err.isEmpty else {
-            return self
-        }
         var copy = self
-        if let existing = copy.error, !existing.isEmpty {
-            if existing != err {
-                copy.error = existing + "; " + err
-            }
-        } else {
-            copy.error = err
-        }
+        copy.error = joinErrors(copy.error, err)
         return copy
     }
 
@@ -127,21 +136,16 @@ public struct UTF8String: Codable, Equatable {
 
     /// Aggregates multiple UTF8String values into one.
     ///
-    /// Behaviour mirrors Go's `textual.String.Aggregate` intent:
+    /// Behaviour mirrors Go's `textual.StringCarrier.Aggregate` intent:
     ///   - Items are stably sorted by index.
     ///   - When indices are equal, `value` is used as a tie-breaker.
     ///   - The output index is reset to 0.
     ///   - Errors are merged into a single portable string.
     public func aggregate(_ items: [UTF8String]) -> UTF8String {
-        // Stable sort: keep original order as a final tie-breaker.
         let indexed = items.enumerated().map { (offset: $0.offset, item: $0.element) }
         let sorted = indexed.sorted { a, b in
-            if a.item.index != b.item.index {
-                return a.item.index < b.item.index
-            }
-            if a.item.value != b.item.value {
-                return a.item.value < b.item.value
-            }
+            if a.item.index != b.item.index { return a.item.index < b.item.index }
+            if a.item.value != b.item.value { return a.item.value < b.item.value }
             return a.offset < b.offset
         }.map { $0.item }
 
@@ -151,9 +155,7 @@ public struct UTF8String: Codable, Equatable {
         var mergedError: String? = nil
         for it in sorted {
             out.append(it.value)
-            if let e = it.error, !e.isEmpty {
-                mergedError = (mergedError == nil) ? e : (mergedError == e ? mergedError : (mergedError! + "; " + e))
-            }
+            mergedError = joinErrors(mergedError, it.error)
         }
 
         return UTF8String(value: out, index: 0, error: mergedError)
@@ -161,33 +163,22 @@ public struct UTF8String: Codable, Equatable {
 }
 
 /// Convenience factory for the minimal UTF8String carrier helper.
-///
-/// Creates a base UTF8String with:
-///   - value = given argument
-///   - index = 0
-///   - error = nil
 @discardableResult
 public func utf8String(_ text: UTF8Text) -> UTF8String {
     return UTF8String(value: text, index: 0, error: nil)
 }
 
+// MARK: - Minimal carrier: JsonCarrier (mirrors Go textual.JsonCarrier)
 
-// MARK: - Minimal carrier: JSON (mirrors Go textual.JSON)
-
-/// JSON is a minimal "carrier" helper mirroring Go's `textual.JSON`.
+/// JsonCarrier is a minimal "carrier" helper mirroring Go's `textual.JsonCarrier`.
 ///
 /// Use it when your pipeline transports raw JSON values (objects or arrays)
-/// instead of plain UTF‑8 text.
+/// instead of plain UTF-8 text.
 ///
-/// Typical streaming use-case:
-///   - Tokenize a byte stream into JSON values (see `scanJSON` below).
-///   - Attach an ordering index.
-///   - Aggregate multiple JSON values into a single JSON array when needed.
-///
-/// The `value` property holds the raw JSON text (UTF‑8).
+/// The `value` property holds the raw JSON text (UTF-8).
 /// This helper does NOT parse or validate JSON; it only transports it.
-public struct JSON: Codable, Equatable {
-    /// The raw JSON value as UTF‑8 text (for example `{"a":1}` or `[1,2]`).
+public struct JsonCarrier: Codable, Equatable {
+    /// The raw JSON value as UTF-8 text (for example `{"a":1}` or `[1,2]`).
     public var value: UTF8Text
 
     /// Optional index in a stream.
@@ -197,9 +188,9 @@ public struct JSON: Codable, Equatable {
     public var error: String?
 
     public init(
-        value: UTF8Text,
-        index: Int = 0,
-        error: String? = nil
+    value: UTF8Text,
+    index: Int = 0,
+    error: String? = nil
     ) {
         self.value = value
         self.index = index
@@ -211,13 +202,13 @@ public struct JSON: Codable, Equatable {
         return value
     }
 
-    /// Creates a new JSON carrier from a UTF‑8 token (Go: FromUTF8String()).
-    public func fromUTF8String(_ text: UTF8Text) -> JSON {
-        return JSON(value: text, index: 0, error: nil)
+    /// Creates a new JsonCarrier from a UTF-8 token (Go: FromUTF8String()).
+    public func fromUTF8String(_ text: UTF8Text) -> JsonCarrier {
+        return JsonCarrier(value: text, index: 0, error: nil)
     }
 
     /// Returns a copy with its index set (Go: WithIndex()).
-    public func withIndex(_ index: Int) -> JSON {
+    public func withIndex(_ index: Int) -> JsonCarrier {
         var copy = self
         copy.index = index
         return copy
@@ -229,21 +220,9 @@ public struct JSON: Codable, Equatable {
     }
 
     /// Returns a copy with an error merged (Go: WithError()).
-    ///
-    /// Errors are stored as plain strings for portability. When multiple errors
-    /// are attached, they are concatenated with `; `.
-    public func withError(_ err: String?) -> JSON {
-        guard let err = err?.trimmingCharacters(in: .whitespacesAndNewlines), !err.isEmpty else {
-            return self
-        }
+    public func withError(_ err: String?) -> JsonCarrier {
         var copy = self
-        if let existing = copy.error, !existing.isEmpty {
-            if existing != err {
-                copy.error = existing + "; " + err
-            }
-        } else {
-            copy.error = err
-        }
+        copy.error = joinErrors(copy.error, err)
         return copy
     }
 
@@ -252,9 +231,9 @@ public struct JSON: Codable, Equatable {
         return error
     }
 
-    /// Aggregates multiple JSON values into a single JSON array.
+    /// Aggregates multiple JsonCarrier values into a single JSON array.
     ///
-    /// Behaviour mirrors Go's `textual.JSON.Aggregate` intent:
+    /// Behaviour mirrors Go's `textual.JsonCarrier.Aggregate` intent:
     ///   - Items are stably sorted by index.
     ///   - When indices are equal, `value` is used as a tie-breaker.
     ///   - The output index is reset to 0.
@@ -262,48 +241,102 @@ public struct JSON: Codable, Equatable {
     ///
     /// Important: no JSON validation is performed; `value` strings are inserted
     /// as-is into the output array.
-    public func aggregate(_ items: [JSON]) -> JSON {
-        // Stable sort: keep original order as a final tie-breaker.
+    public func aggregate(_ items: [JsonCarrier]) -> JsonCarrier {
         let indexed = items.enumerated().map { (offset: $0.offset, item: $0.element) }
         let sorted = indexed.sorted { a, b in
-            if a.item.index != b.item.index {
-                return a.item.index < b.item.index
-            }
-            if a.item.value != b.item.value {
-                return a.item.value < b.item.value
-            }
+            if a.item.index != b.item.index { return a.item.index < b.item.index }
+            if a.item.value != b.item.value { return a.item.value < b.item.value }
             return a.offset < b.offset
         }.map { $0.item }
 
         var out = "["
-        // Rough capacity estimate.
         out.reserveCapacity(sorted.reduce(2) { $0 + $1.value.count + 1 })
 
         var mergedError: String? = nil
         for (i, it) in sorted.enumerated() {
-            if i > 0 {
-                out.append(",")
-            }
+            if i > 0 { out.append(",") }
             out.append(it.value)
-            if let e = it.error, !e.isEmpty {
-                mergedError = (mergedError == nil) ? e : (mergedError == e ? mergedError : (mergedError! + "; " + e))
-            }
+            mergedError = joinErrors(mergedError, it.error)
         }
         out.append("]")
 
-        return JSON(value: out, index: 0, error: mergedError)
+        return JsonCarrier(value: out, index: 0, error: mergedError)
     }
 }
 
-/// Convenience factory for the minimal JSON carrier helper.
-///
-/// Creates a base JSON with:
-///   - value = given argument
-///   - index = 0
-///   - error = nil
+/// Convenience factory for the minimal JsonCarrier helper.
 @discardableResult
-public func rawJSON(_ text: UTF8Text) -> JSON {
-    return JSON(value: text, index: 0, error: nil)
+public func jsonFrom(_ text: UTF8Text) -> JsonCarrier {
+    return JsonCarrier(value: text, index: 0, error: nil)
+}
+
+// MARK: - Typed carrier: JsonGenericCarrier<T> (mirrors Go textual.JsonGenericCarrier[T])
+
+/// JsonGenericCarrier is a typed JSON carrier mirroring Go's `textual.JsonGenericCarrier[T]`.
+///
+/// It encodes/decodes itself as JSON and carries:
+///   - a typed value (`value`)
+///   - an optional ordering hint (`index`)
+///   - an optional portable error string (`error`)
+///
+/// Note:
+/// - This carrier mirrors Go's `Carrier`.
+/// - `utf8String()` returns the JSON encoding of the carrier itself.
+public struct JsonGenericCarrier<T: Codable>: Codable, Equatable {
+    public var value: T
+    public var index: Int
+    public var error: String?
+
+    public init(value: T, index: Int = 0, error: String? = nil) {
+        self.value = value
+        self.index = index
+        self.error = error
+    }
+
+    /// Returns the JSON encoding of the carrier (Go: UTF8String()).
+    public func utf8String() -> UTF8Text {
+        let encoder = JSONEncoder()
+        do {
+            let data = try encoder.encode(self)
+            return String(decoding: data, as: UTF8.self)
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    /// Decodes a carrier from its JSON representation (Go: FromUTF8String()).
+    ///
+    /// If decoding fails, the returned carrier has `error` set.
+    public static func fromUTF8String(_ text: UTF8Text) -> JsonGenericCarrier<T>? {
+        let decoder = JSONDecoder()
+        do {
+            return try decoder.decode(JsonGenericCarrier<T>.self, from: Data(text.utf8))
+        } catch {
+            // Best effort: the JSON could be invalid, but we still want a value.
+            // Since we don't have a safe default for T, return nil.
+            return nil
+        }
+    }
+
+    /// Returns a copy with its index set (Go: WithIndex()).
+    public func withIndex(_ index: Int) -> JsonGenericCarrier<T> {
+        var copy = self
+        copy.index = index
+        return copy
+    }
+
+    /// Returns the stored index (Go: GetIndex()).
+    public func getIndex() -> Int { index }
+
+    /// Returns a copy with an error merged (Go: WithError()).
+    public func withError(_ err: String?) -> JsonGenericCarrier<T> {
+        var copy = self
+        copy.error = joinErrors(copy.error, err)
+        return copy
+    }
+
+    /// Returns the stored error (Go: GetError()).
+    public func getError() -> String? { error }
 }
 
 // MARK: - Core data types (rich carrier): Parcel / Fragment / RawText
@@ -313,31 +346,19 @@ public func rawJSON(_ text: UTF8Text) -> JSON {
 /// Positions (`pos`) and lengths (`len`) are expressed in Unicode scalar
 /// indices, not bytes. This matches the Go implementation which operates
 /// in rune space.
-///
-/// Transformed text typically carries the processed representation, e.g.
-/// IPA, SAMPA, pseudo-phonetics, etc.
 public struct Fragment: Codable, Equatable {
-    /// The transformed text (IPA, SAMPA, etc.).
     public var transformed: UTF8Text
-
-    /// First scalar position in the original text.
     public var pos: Int
-
-    /// Length in scalars in the original text.
     public var len: Int
-
-    /// Optional confidence indicator for the transformation.
     public var confidence: Double
-
-    /// Optional variant index when several candidates exist.
     public var variant: Int
 
     public init(
-        transformed: UTF8Text,
-        pos: Int,
-        len: Int,
-        confidence: Double = 0,
-        variant: Int = 0
+    transformed: UTF8Text,
+    pos: Int,
+    len: Int,
+    confidence: Double = 0,
+    variant: Int = 0
     ) {
         self.transformed = transformed
         self.pos = pos
@@ -348,17 +369,9 @@ public struct Fragment: Codable, Equatable {
 }
 
 /// RawText represents an untouched segment of the original text.
-///
-/// It is computed from a Parcel and covers every range that is not overlapped
-/// by any Fragment (after merging overlapping fragments).
 public struct RawText: Codable, Equatable {
-    /// The raw text content.
     public var text: UTF8Text
-
-    /// First scalar position in the original text.
     public var pos: Int
-
-    /// Length in scalars.
     public var len: Int
 
     public init(text: UTF8Text, pos: Int, len: Int) {
@@ -369,38 +382,17 @@ public struct RawText: Codable, Equatable {
 }
 
 /// Parcel is the rich value in the textual pipeline.
-///
-/// It mirrors the Go struct (textual.Parcel):
-///
-///   type Parcel struct {
-///     Index     int
-///     Text      UTF8String
-///     Fragments []Fragment
-///     Error     error
-///   }
-///
-/// In Swift:
-///   - `text` is a UTF-8 String.
-///   - `fragments` is an array of Fragment values.
-///   - `error` is an optional string; this helper does not interpret it.
 public struct Parcel: Codable, Equatable {
-    /// Optional index in a stream of parcels.
     public var index: Int
-
-    /// Original UTF-8 text.
     public var text: UTF8Text
-
-    /// Transformed fragments that reference ranges in `text`.
     public var fragments: [Fragment]
-
-    /// Optional error. Kept as plain text for portability.
     public var error: String?
 
     public init(
-        index: Int = -1,
-        text: UTF8Text,
-        fragments: [Fragment] = [],
-        error: String? = nil
+    index: Int = -1,
+    text: UTF8Text,
+    fragments: [Fragment] = [],
+    error: String? = nil
     ) {
         self.index = index
         self.text = text
@@ -410,61 +402,28 @@ public struct Parcel: Codable, Equatable {
 
     // MARK: - Carrier-like convenience helpers
 
-    /// Returns the UTF‑8 rendering (Go: UTF8String()).
-    public func utf8String() -> UTF8Text {
-        return render()
-    }
+    public func utf8String() -> UTF8Text { render() }
 
-    /// Creates a new Parcel from a UTF‑8 token (Go: FromUTF8String()).
     public func fromUTF8String(_ text: UTF8Text) -> Parcel {
         return Parcel(index: -1, text: text, fragments: [], error: nil)
     }
 
-    /// Returns a copy with its index set (Go: WithIndex()).
     public func withIndex(_ index: Int) -> Parcel {
         var copy = self
         copy.index = index
         return copy
     }
 
-    /// Returns the stored index (Go: GetIndex()).
-    public func getIndex() -> Int {
-        return index
-    }
+    public func getIndex() -> Int { index }
 
-    /// Returns a copy with an error merged (Go: WithError()).
-    ///
-    /// Errors are stored as plain strings for portability. When multiple errors
-    /// are attached, they are concatenated with `; `.
     public func withError(_ err: String?) -> Parcel {
-        guard let err = err?.trimmingCharacters(in: .whitespacesAndNewlines), !err.isEmpty else {
-            return self
-        }
         var copy = self
-        if let existing = copy.error, !existing.isEmpty {
-            if existing != err {
-                copy.error = existing + "; " + err
-            }
-        } else {
-            copy.error = err
-        }
+        copy.error = joinErrors(copy.error, err)
         return copy
     }
 
-    /// Returns the stored error (Go: GetError()).
-    public func getError() -> String? {
-        return error
-    }
+    public func getError() -> String? { error }
 
-    /// Aggregates multiple parcels into a single parcel by concatenating their
-    /// `text` fields and offsetting fragment positions.
-    ///
-    /// This is a convenience that mirrors the intent of Go Carrier.Aggregate for
-    /// the Parcel shape:
-    ///   - texts are concatenated in the provided order
-    ///   - fragment positions are shifted by the Unicode scalar length of the
-    ///     preceding texts
-    ///   - errors are merged into a single portable string
     public func aggregate(_ parcels: [Parcel]) -> Parcel {
         var outText = ""
         outText.reserveCapacity(parcels.reduce(0) { $0 + $1.text.count })
@@ -476,12 +435,8 @@ public struct Parcel: Codable, Equatable {
         var mergedError: String? = nil
 
         for p in parcels {
-            // Merge errors.
-            if let e = p.error, !e.isEmpty {
-                mergedError = (mergedError == nil) ? e : (mergedError == e ? mergedError : (mergedError! + "; " + e))
-            }
+            mergedError = joinErrors(mergedError, p.error)
 
-            // Shift fragments.
             for f in p.fragments {
                 outFragments.append(
                     Fragment(
@@ -502,30 +457,17 @@ public struct Parcel: Codable, Equatable {
     }
 }
 
-// MARK: - Convenience construction
-
-/// Constructs a base Parcel to be used as a starting point, mirroring the
-/// JS `input(text)` factory.
-///
-/// - Parameter text: Original UTF-8 text.
-/// - Returns: A Parcel with index = -1, no fragments, and no error.
+/// Constructs a base Parcel to be used as a starting point, mirroring the JS `input(text)` factory.
 @discardableResult
 public func input(_ text: UTF8Text) -> Parcel {
     return Parcel(index: -1, text: text, fragments: [], error: nil)
 }
 
-
 // MARK: - Streaming tokenization helper: scanJSON (mirrors Go ScanJSON)
 
-/// Errors produced by `scanJSON`.
 public enum JSONScanError: Error, LocalizedError, Equatable {
-    /// The stream ended while a JSON value was still open.
     case unexpectedEOF
-
-    /// A closing delimiter was found while no opening delimiter was pending.
     case unexpectedClosing(byte: UInt8, index: Int)
-
-    /// A closing delimiter did not match the current opening delimiter.
     case mismatchedClosing(byte: UInt8, expectedOpen: UInt8, index: Int)
 
     public var errorDescription: String? {
@@ -547,7 +489,6 @@ public enum JSONScanError: Error, LocalizedError, Equatable {
         case 0x5D: return "']'"
         case 0x22: return "'\"'"
         default:
-            // Printable ASCII range.
             if byte >= 0x20 && byte <= 0x7E {
                 return "'" + String(UnicodeScalar(byte)) + "'"
             }
@@ -557,55 +498,27 @@ public enum JSONScanError: Error, LocalizedError, Equatable {
 }
 
 /// scanJSON tokenizes a buffer into a single top-level JSON value (object or array).
-///
-/// This is a Swift analogue of Go's `bufio.SplitFunc` used by `ScanJSON`.
-///
-/// - Parameters:
-///   - data: The current buffer (UTF‑8 bytes).
-///   - atEOF: Whether the stream has ended.
-/// - Returns: A tuple with:
-///   - advance: number of bytes to consume from `data`
-///   - token: a `Data` slice containing the JSON value (when complete)
-///   - error: non-nil on framing errors (mismatched delimiters, unexpected EOF)
-///
-/// Behavior:
-///
-///   - Any leading bytes before the first `{` or `[` are ignored (consumed).
-///   - Once a `{` or `[` is found, nesting is tracked until the matching closing
-///     delimiter is found.
-///   - JSON strings are recognized; braces/brackets inside strings do not affect
-///     nesting. Basic escape handling is implemented so `\"` does not end a string.
-///   - If `atEOF` is true and a JSON value is still open, `error` is set to
-///     `JSONScanError.unexpectedEOF`.
 public func scanJSON(_ data: Data, atEOF: Bool) -> (advance: Int, token: Data?, error: Error?) {
-    // No data and nothing more to read.
     if atEOF && data.isEmpty {
         return (advance: 0, token: nil, error: nil)
     }
 
-    // Find the first '{' or '['. Everything before it is ignored.
     var start: Int? = nil
     for (i, b) in data.enumerated() {
-        if b == 0x7B /* '{' */ || b == 0x5B /* '[' */ {
+        if b == 0x7B || b == 0x5B {
             start = i
             break
         }
     }
 
     guard let startIndex = start else {
-        // No opening delimiter in the current buffer.
-        // Since we explicitly ignore leading noise, we can safely consume the
-        // whole buffer (even when !atEOF) to avoid unbounded growth.
         return (advance: data.count, token: nil, error: nil)
     }
 
-    // Consume ignored leading bytes first so the caller can retry from the
-    // opening delimiter on the next iteration.
     if startIndex > 0 {
         return (advance: startIndex, token: nil, error: nil)
     }
 
-    // data[0] is '{' or '['.
     var stack: [UInt8] = []
     stack.reserveCapacity(8)
     stack.append(data[0])
@@ -613,7 +526,6 @@ public func scanJSON(_ data: Data, atEOF: Bool) -> (advance: Int, token: Data?, 
     var inString = false
     var escaped = false
 
-    // Start scanning right after the opening delimiter.
     var i = 1
     while i < data.count {
         let b = data[i]
@@ -624,32 +536,31 @@ public func scanJSON(_ data: Data, atEOF: Bool) -> (advance: Int, token: Data?, 
                 i += 1
                 continue
             }
-            if b == 0x5C /* '\' */ {
+            if b == 0x5C {
                 escaped = true
                 i += 1
                 continue
             }
-            if b == 0x22 /* '"' */ {
+            if b == 0x22 {
                 inString = false
             }
             i += 1
             continue
         }
 
-        // Outside of strings.
-        if b == 0x22 /* '"' */ {
+        if b == 0x22 {
             inString = true
             i += 1
             continue
         }
 
-        if b == 0x7B /* '{' */ || b == 0x5B /* '[' */ {
+        if b == 0x7B || b == 0x5B {
             stack.append(b)
             i += 1
             continue
         }
 
-        if b == 0x7D /* '}' */ || b == 0x5D /* ']' */ {
+        if b == 0x7D || b == 0x5D {
             guard let top = stack.last else {
                 return (advance: 0, token: nil, error: JSONScanError.unexpectedClosing(byte: b, index: i))
             }
@@ -659,9 +570,7 @@ public func scanJSON(_ data: Data, atEOF: Bool) -> (advance: Int, token: Data?, 
                 return (advance: 0, token: nil, error: JSONScanError.mismatchedClosing(byte: b, expectedOpen: top, index: i))
             }
 
-            // Pop.
             stack.removeLast()
-
             if stack.isEmpty {
                 let end = i + 1
                 return (advance: end, token: data.subdata(in: 0..<end), error: nil)
@@ -674,16 +583,15 @@ public func scanJSON(_ data: Data, atEOF: Bool) -> (advance: Int, token: Data?, 
         i += 1
     }
 
-    // Buffer ended before we found the matching closing delimiter.
     if atEOF {
         return (advance: 0, token: nil, error: JSONScanError.unexpectedEOF)
     }
     return (advance: 0, token: nil, error: nil)
 }
 
-/// Convenience overload that scans a UTF‑8 string buffer.
+/// Convenience overload that scans a UTF-8 string buffer.
 ///
-/// - Note: `advance` is expressed in **UTF‑8 bytes**, not Swift `String.Index`.
+/// - Note: `advance` is expressed in **UTF-8 bytes**, not Swift `String.Index`.
 public func scanJSON(_ text: String, atEOF: Bool) -> (advance: Int, token: String?, error: Error?) {
     let data = Data(text.utf8)
     let res = scanJSON(data, atEOF: atEOF)
@@ -697,131 +605,54 @@ public func scanJSON(_ text: String, atEOF: Bool) -> (advance: Int, token: Strin
 // MARK: - RawTexts / Render
 
 public extension Parcel {
-    /// Computes the non-transformed segments of the original `text`.
-    ///
-    /// Behaviour is intentionally aligned with the Go implementation:
-    ///
-    ///   - If there are no fragments, returns a single `RawText` covering the
-    ///     whole text (in scalar units).
-    ///   - Fragments are copied, sorted by `pos`, and treated as a union of
-    ///     ranges. Overlapping fragments or multiple variants at the same `pos`
-    ///     are merged via a moving cursor.
-    ///   - Zero-length fragments and fragments fully outside the text are
-    ///     ignored.
-    ///   - Out-of-range fragment bounds are clamped to `[0, textLength]`.
-    ///
-    /// Positions and lengths are interpreted in terms of Unicode scalars,
-    /// matching Go runes for UTF-8 strings.
-    ///
-    /// - Returns: Array of `RawText` segments.
     func rawTexts() -> [RawText] {
         var raw: [RawText] = []
 
         let scalars = Array(text.unicodeScalars)
         let textLen = scalars.count
-
-        guard textLen > 0 else {
-            return raw
-        }
+        guard textLen > 0 else { return raw }
 
         guard !fragments.isEmpty else {
-            // No fragments: the whole text is raw.
-            raw.append(
-                RawText(text: text, pos: 0, len: textLen)
-            )
+            raw.append(RawText(text: text, pos: 0, len: textLen))
             return raw
         }
 
-        // Copy and sort fragments by start position to compute the union of
-        // their covered ranges in a single pass.
         var sortedFragments = fragments
         sortedFragments.sort { a, b in
-            if a.pos == b.pos {
-                return a.len < b.len
-            }
+            if a.pos == b.pos { return a.len < b.len }
             return a.pos < b.pos
         }
 
-        // Cursor points to the first scalar index that has not yet been
-        // classified as belonging to a fragment.
         var cursor = 0
 
         for fragment in sortedFragments {
-            guard fragment.len > 0 else {
-                // Ignore zero or negative length fragments.
-                continue
-            }
+            guard fragment.len > 0 else { continue }
 
             var start = fragment.pos
             var end = fragment.pos + fragment.len
 
-            // Clamp fragment bounds to the valid [0, textLen] interval.
-            if start < 0 {
-                start = 0
-            }
-            if start >= textLen {
-                // Starts beyond the end of the text: nothing to do.
-                continue
-            }
-            if end > textLen {
-                end = textLen
-            }
+            if start < 0 { start = 0 }
+            if start >= textLen { continue }
+            if end > textLen { end = textLen }
 
-            // Any gap between cursor and the start of the fragment is raw text.
             if cursor < start {
                 let slice = scalars[cursor..<start]
                 let segmentText = String(String.UnicodeScalarView(slice))
-                raw.append(
-                    RawText(
-                        text: segmentText,
-                        pos: cursor,
-                        len: start - cursor
-                    )
-                )
+                raw.append(RawText(text: segmentText, pos: cursor, len: start - cursor))
             }
 
-            // Advance cursor to end of fragment, never backwards. This merges
-            // overlapping fragments or multiple variants starting at the same
-            // position.
-            if cursor < end {
-                cursor = end
-            }
+            if cursor < end { cursor = end }
         }
 
-        // Trailing text after the last fragment is also raw.
         if cursor < textLen {
             let slice = scalars[cursor..<textLen]
             let segmentText = String(String.UnicodeScalarView(slice))
-            raw.append(
-                RawText(
-                    text: segmentText,
-                    pos: cursor,
-                    len: textLen - cursor
-                )
-            )
+            raw.append(RawText(text: segmentText, pos: cursor, len: textLen - cursor))
         }
 
         return raw
     }
 
-    /// Reconstructs a single output string by merging transformed fragments and
-    /// raw text segments according to their positions.
-    ///
-    /// Rules (matching the Go behaviour and the JS helper):
-    ///
-    ///   - Both fragments and raw texts reference absolute positions in the
-    ///     original string.
-    ///   - All segments (fragments + raw) are collected with their start `pos`.
-    ///   - Segments are sorted by `pos` to restore the original sequence.
-    ///   - Fragment output uses `Fragment.transformed`.
-    ///   - RawText output uses `RawText.text`.
-    ///   - No further transformation is applied to the text content.
-    ///
-    /// If multiple fragments share the same starting position, only the first
-    /// one (in the original fragments array) is used, which is consistent with
-    /// the Go implementation.
-    ///
-    /// - Returns: Reconstructed UTF-8 string.
     func render() -> UTF8Text {
         struct Segment {
             let pos: Int
@@ -829,64 +660,34 @@ public extension Parcel {
         }
 
         var segments: [Segment] = []
-
         let rawSegments = rawTexts()
 
-        // Convert fragments into segments, only one per starting position.
         var lastFragPos: Int? = nil
         for fragment in fragments {
             if lastFragPos != fragment.pos {
-                segments.append(
-                    Segment(
-                        pos: fragment.pos,
-                        text: fragment.transformed
-                    )
-                )
+                segments.append(Segment(pos: fragment.pos, text: fragment.transformed))
                 lastFragPos = fragment.pos
             }
         }
 
-        // Convert raw text segments into segments as well.
         for raw in rawSegments {
-            segments.append(
-                Segment(
-                    pos: raw.pos,
-                    text: raw.text
-                )
-            )
+            segments.append(Segment(pos: raw.pos, text: raw.text))
         }
 
-        // Sort by position to ensure the correct ordering.
         segments.sort { $0.pos < $1.pos }
 
-        // Merge segments into the final output string.
         var builder = String()
         builder.reserveCapacity(text.count)
 
         for segment in segments {
             builder.append(segment.text)
         }
-
         return builder
     }
 }
 
 // MARK: - Encoding catalogue
 
-/// EncodingID is an enum-like mapping of supported encodings to numeric IDs.
-///
-/// The numeric values follow the same ordering as the Go iota-based enum and
-/// the JavaScript helper:
-///
-///   0  utf8
-///   1  utf16le
-///   2  utf16be
-///   3  utf16leBom
-///   4  utf16beBom
-///   5  iso8859_1
-///   ...
-///   40 eucKr
-///
 public enum EncodingID: Int, Codable, CaseIterable {
     case utf8 = 0
     case utf16LE = 1
@@ -938,7 +739,6 @@ public enum EncodingID: Int, Codable, CaseIterable {
 
     case eucKR = 40
 
-    /// Canonical encoding name, mirroring `EncodingName()` in Go.
     public var canonicalName: String {
         switch self {
         case .utf8: return "UTF-8"
@@ -993,8 +793,6 @@ public enum EncodingID: Int, Codable, CaseIterable {
         }
     }
 
-    /// Case-insensitive and trim-aware dictionary of encoding names to IDs,
-    /// mirroring the Go `nameToEncoding` map and the JS `EncodingNameToId`.
     public static let nameToEncoding: [String: EncodingID] = {
         var map: [String: EncodingID] = [:]
 
@@ -1057,14 +855,6 @@ public enum EncodingID: Int, Codable, CaseIterable {
         return map
     }()
 
-    /// Looks up an encoding ID from a human-readable name, mirroring
-    /// `ParseEncoding(name string)` in Go and `parseEncoding(name)` in JS.
-    ///
-    /// The lookup is case-insensitive and ignores leading/trailing whitespace.
-    ///
-    /// - Parameter name: Name such as `"utf-8"` or `"Windows-1252"`.
-    /// - Returns: Matching `EncodingID`.
-    /// - Throws: `EncodingError.unknownEncoding` when the encoding is unknown.
     public static func parse(_ name: String) throws -> EncodingID {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = trimmed.lowercased()
@@ -1075,7 +865,6 @@ public enum EncodingID: Int, Codable, CaseIterable {
     }
 }
 
-/// Errors thrown by encoding-related helpers.
 public enum EncodingError: Error, LocalizedError {
     case unknownEncoding(String)
 
