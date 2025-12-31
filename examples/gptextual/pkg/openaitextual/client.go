@@ -1,4 +1,4 @@
-package gptextual
+package openaitextual
 
 import (
 	"bufio"
@@ -12,7 +12,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 	"github.com/benoit-pereira-da-silva/textual/pkg/textual"
 )
 
@@ -43,14 +42,14 @@ type ResponsesRequest struct {
 	// - no multimodal,
 	// - no function calling.
 	//
-	// You can still support conversation state by passing a full history in Input.
+	// You can still support the conversation state by passing a full history in Input.
 	Model           string `json:"model,omitempty"`
 	Input           any    `json:"input,omitempty"`
 	Stream          bool   `json:"stream,omitempty"`
 	Instructions    string `json:"instructions,omitempty"`
 	MaxOutputTokens *int   `json:"max_output_tokens,omitempty"`
 
-	// Non-JSON / transport fields (used by gptextual helpers).
+	// Non-JsonCarrier / transport fields (used by gptextual helpers).
 	Ctx       context.Context `json:"-"`
 	SplitFunc bufio.SplitFunc `json:"-"`
 }
@@ -159,9 +158,9 @@ func (c OpenaiClient) ResponsesStream(ctx context.Context, r *ResponsesRequest) 
 
 // ProcessResponses calls the response endpoint.
 //
-// If an error occurs immediately it returns an error.
-// If there is an error during processing the error is stored in the Carrier.
-func ProcessResponses[S carrier.Carrier[S]](c OpenaiClient, r *ResponsesRequest, processor textual.Processor[S]) error {
+// If an error occurs immediately, it returns an error.
+// If there is an error during processing, the error is stored in the Carrier.
+func ProcessResponses[S textual.Carrier[S]](c OpenaiClient, r *ResponsesRequest, processor textual.Processor[S]) error {
 	if processor == nil {
 		return errors.New("gptextual: nil processor")
 	}
@@ -194,7 +193,7 @@ func ProcessResponses[S carrier.Carrier[S]](c OpenaiClient, r *ResponsesRequest,
 }
 
 // TranscodeResponses calls the response endpoint and connects the stream to a textual Transcoder.
-func TranscodeResponses[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]](c OpenaiClient, r *ResponsesRequest, processor textual.Transcoder[S1, S2]) error {
+func TranscodeResponses[S1 textual.Carrier[S1], S2 textual.Carrier[S2]](c OpenaiClient, r *ResponsesRequest, processor textual.Transcoder[S1, S2]) error {
 	if processor == nil {
 		return errors.New("gptextual: nil transcoder")
 	}

@@ -26,7 +26,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 	textual "github.com/benoit-pereira-da-silva/textual/pkg/textual"
 )
 
@@ -99,12 +98,12 @@ func main() {
 	}()
 
 	// Build the reverse-words processor; optionally chain it twice.
-	// We use a textual.String because a textual.Parcel is useless in this context.
+	// We use a textual.StringCarrier because a textual.Parcel is useless in this context.
 	// buildProcessor[textual.Parcel](*twice) works too.!
-	processor := buildProcessor[carrier.String](*twice)
+	processor := buildProcessor[textual.StringCarrier](*twice)
 
 	// Construct an IOReaderProcessor that will scan the file token-by-token and
-	// feed each token as a textual.String into the processor.
+	// feed each token as a textual.StringCarrier into the processor.
 	ioProc := textual.NewIOReaderProcessor(processor, f)
 	if *wordByWord {
 		// Switch from line-based tokenization to expression tokenization:
@@ -135,7 +134,7 @@ func main() {
 // If twice is false, the returned Processor is a single reverse-words stage.
 // If twice is true, two reverse-words processors are chained with textual.Chain
 // so that words are reversed twice in a row (resulting in the original text).
-func buildProcessor[S carrier.Carrier[S]](twice bool) textual.Processor[S] {
+func buildProcessor[S textual.Carrier[S]](twice bool) textual.Processor[S] {
 
 	// makeReverseStage returns a single reverse-words stage.
 	//
@@ -214,7 +213,7 @@ func buildProcessor[S carrier.Carrier[S]](twice bool) textual.Processor[S] {
 //	"Ciel,"   -> "Leic,"
 //	"Bonjour" -> "Ruojnob"
 //	"WORLD!"  -> "DLROW!"
-func reverseWords(input carrier.UTF8String) carrier.UTF8String {
+func reverseWords(input textual.UTF8String) textual.UTF8String {
 	runes := []rune(string(input))
 	n := len(runes)
 
@@ -288,5 +287,5 @@ func reverseWords(input carrier.UTF8String) carrier.UTF8String {
 		}
 	}
 
-	return carrier.UTF8String(runes)
+	return textual.UTF8String(runes)
 }

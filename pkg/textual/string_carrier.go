@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package carrier
+package textual
 
 import (
 	"errors"
@@ -20,7 +20,7 @@ import (
 	"strings"
 )
 
-// String is the minimal Carrier implementation.
+// StringCarrier is a simple Carrier and AggregatableCarrier implementation.
 //
 // It is useful when you only need to stream UTF-8 text through processors and
 // you don't need partial spans, variants, or per-token metadata beyond an
@@ -30,31 +30,31 @@ import (
 // sets it to the token sequence number). Value carries the UTF-8 text.
 // Error carries a non-fatal processing error attached by processors.
 //
-// String implements Carrier[String] and can be used with the generic stack
+// StringCarrier implements Carrier[StringCarrier] and can be used with the generic stack
 // (Processor, Chain, Router, Transformation, ...).
-type String struct {
+type StringCarrier struct {
 	Value string
 	Index int
 	Error error
 }
 
-func (s String) UTF8String() UTF8String {
+func (s StringCarrier) UTF8String() UTF8String {
 	return s.Value
 }
 
-func (s String) FromUTF8String(str UTF8String) String {
-	return String{
+func (s StringCarrier) FromUTF8String(str UTF8String) StringCarrier {
+	return StringCarrier{
 		Value: str,
 		Index: 0,
 	}
 }
 
-func (s String) WithIndex(idx int) String {
+func (s StringCarrier) WithIndex(idx int) StringCarrier {
 	s.Index = idx
 	return s
 }
 
-func (s String) GetIndex() int {
+func (s StringCarrier) GetIndex() int {
 	return s.Index
 }
 
@@ -62,7 +62,7 @@ func (s String) GetIndex() int {
 // AggregatableCarrier implementation
 ///////////////////////////////////////
 
-// Aggregate concatenates multiple String values into one.
+// Aggregate concatenates multiple StringCarrier values into one.
 //
 // The input slice is copied and stably sorted by Index, so callers can emit
 // out-of-order fragments and still obtain a deterministic output.
@@ -72,8 +72,8 @@ func (s String) GetIndex() int {
 //
 // Errors from all inputs are merged (using errors.Join) and attached to the
 // returned value.
-func (s String) Aggregate(stringers []String) String {
-	items := make([]String, len(stringers))
+func (s StringCarrier) Aggregate(stringers []StringCarrier) StringCarrier {
+	items := make([]StringCarrier, len(stringers))
 	copy(items, stringers)
 
 	sort.SliceStable(items, func(i, j int) bool {
@@ -99,10 +99,10 @@ func (s String) Aggregate(stringers []String) String {
 		}
 	}
 
-	return String{Value: b.String(), Index: 0, Error: aggErr}
+	return StringCarrier{Value: b.String(), Index: 0, Error: aggErr}
 }
 
-func (s String) WithError(err error) String {
+func (s StringCarrier) WithError(err error) StringCarrier {
 	if err == nil {
 		return s
 	}
@@ -114,6 +114,6 @@ func (s String) WithError(err error) String {
 	return s
 }
 
-func (s String) GetError() error {
+func (s StringCarrier) GetError() error {
 	return s.Error
 }

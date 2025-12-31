@@ -19,8 +19,6 @@ import (
 	"math/rand"
 	"sync"
 	"time"
-
-	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
 // RoutePredicate decides whether a given item should be handled by a route.
@@ -36,11 +34,11 @@ import (
 //		return len(res.RawTexts()) > 0
 //	}
 //
-//	// Route String values matching a prefix.
-//	pred2 := func(ctx context.Context, s String) bool {
+//	// Route StringCarrier values matching a prefix.
+//	pred2 := func(ctx context.Context, s StringCarrier) bool {
 //		return strings.HasPrefix(s.Value, "WARN")
 //	}
-type RoutePredicate[S carrier.Carrier[S]] func(ctx context.Context, item S) bool
+type RoutePredicate[S Carrier[S]] func(ctx context.Context, item S) bool
 
 // RoutingStrategy controls how the Router selects target routes among the ones
 // whose predicate matches.
@@ -67,7 +65,7 @@ const (
 
 // route is an internal configuration element combining a Processor and its
 // selection predicate.
-type route[S carrier.Carrier[S]] struct {
+type route[S Carrier[S]] struct {
 	processor Processor[S]
 	predicate RoutePredicate[S] // nil means "always eligible"
 }
@@ -92,7 +90,7 @@ type route[S carrier.Carrier[S]] struct {
 //
 // Note: AddRoute/AddProcessor/SetStrategy are not concurrency-safe; configure
 // the router during pipeline construction, before calling Apply.
-type Router[S carrier.Carrier[S]] struct {
+type Router[S Carrier[S]] struct {
 	routes   []route[S]
 	strategy RoutingStrategy
 
@@ -107,7 +105,7 @@ type Router[S carrier.Carrier[S]] struct {
 // routes with no predicate (always eligible). This is useful for simple
 // balancing setups (round-robin, random, broadcast) where routing does not
 // depend on the item content.
-func NewRouter[S carrier.Carrier[S]](strategy RoutingStrategy, processors ...Processor[S]) *Router[S] {
+func NewRouter[S Carrier[S]](strategy RoutingStrategy, processors ...Processor[S]) *Router[S] {
 	r := &Router[S]{
 		strategy: strategy,
 		rnd:      rand.New(rand.NewSource(time.Now().UnixNano())),

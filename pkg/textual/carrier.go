@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package carrier
+package textual
 
 // UTF8String is a symbolic alias used throughout the package.
 //
@@ -28,7 +28,7 @@ type UTF8String = string
 // The stack (Processor, Chain, Router, IOReaderProcessor, Transformation, …)
 // is parameterized by a type S that implements Carrier[S].
 //
-// A carrier can be as small as a string wrapper (see textual.String) or a rich
+// A carrier can be as small as a string wrapper (see textual.StringCarrier) or a rich
 // structure that keeps track of partial transformations and alternatives (see
 // textual.Parcel).
 //

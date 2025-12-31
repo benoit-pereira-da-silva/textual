@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package carrier
+package textual
 
 import (
 	"encoding/json"
@@ -21,43 +21,45 @@ import (
 	"strings"
 )
 
-// JSON is a minimal Carrier implementation that transports a single JSON value.
+// JsonCarrier is a minimal dynamic Carrier and AggregatableCarrier implementation that transports an opaque JsonCarrier value.
+// When the type is stable, use a generic JsonGenericCarrier
+// Else you can use JsonCarrier and cast according to context or in cascade using the facility CastJson.
 //
-// It is useful when your pipeline operates on raw JSON values instead of plain
-// UTF‑8 text. The Value field holds the raw JSON bytes for one top-level value
+// It is useful when your pipeline operates on raw JsonCarrier values instead of plain
+// UTF‑8 text. The Value field holds the raw JsonCarrier bytes for one top-level value
 // (typically an object `{...}` or array `[...]`).
 //
-// Aggregate concatenates multiple JSON values into a single JSON array.
-type JSON struct {
+// Aggregate concatenates multiple JsonCarrier values into a single JsonCarrier array.
+type JsonCarrier struct {
 	Value json.RawMessage `json:"value"`
 	Index int             `json:"index,omitempty"`
 	Error error           `json:"error,omitempty"`
 }
 
-func (s JSON) UTF8String() UTF8String {
-	// Value is expected to contain UTF‑8 JSON bytes.
-	return UTF8String(string(s.Value))
+func (s JsonCarrier) UTF8String() UTF8String {
+	// Value is expected to contain UTF‑8 JsonCarrier bytes.
+	return UTF8String(s.Value)
 }
 
-func (s JSON) FromUTF8String(str UTF8String) JSON {
-	// Note: no JSON validation is performed here; the carrier only transports bytes.
-	return JSON{
+func (s JsonCarrier) FromUTF8String(str UTF8String) JsonCarrier {
+	// Note: no JsonCarrier validation is performed here; the carrier only transports bytes.
+	return JsonCarrier{
 		Value: json.RawMessage([]byte(str)),
 		Index: 0,
 		Error: nil,
 	}
 }
 
-func (s JSON) WithIndex(idx int) JSON {
+func (s JsonCarrier) WithIndex(idx int) JsonCarrier {
 	s.Index = idx
 	return s
 }
 
-func (s JSON) GetIndex() int {
+func (s JsonCarrier) GetIndex() int {
 	return s.Index
 }
 
-func (s JSON) WithError(err error) JSON {
+func (s JsonCarrier) WithError(err error) JsonCarrier {
 	if err == nil {
 		return s
 	}
@@ -69,7 +71,7 @@ func (s JSON) WithError(err error) JSON {
 	return s
 }
 
-func (s JSON) GetError() error {
+func (s JsonCarrier) GetError() error {
 	return s.Error
 }
 
@@ -77,7 +79,7 @@ func (s JSON) GetError() error {
 // AggregatableCarrier implementation
 ///////////////////////////////////////
 
-// Aggregate concatenates multiple JSON values into a JSON array.
+// Aggregate concatenates multiple JsonCarrier values into a JsonCarrier array.
 //
 // The input slice is copied and stably sorted by Index, so callers can emit
 // out-of-order fragments and still obtain a deterministic output.
@@ -87,8 +89,8 @@ func (s JSON) GetError() error {
 //
 // Errors from all inputs are merged (using errors.Join) and attached to the
 // returned value.
-func (s JSON) Aggregate(values []JSON) JSON {
-	items := make([]JSON, len(values))
+func (s JsonCarrier) Aggregate(values []JsonCarrier) JsonCarrier {
+	items := make([]JsonCarrier, len(values))
 	copy(items, values)
 
 	sort.SliceStable(items, func(i, j int) bool {
@@ -124,5 +126,5 @@ func (s JSON) Aggregate(values []JSON) JSON {
 	}
 	b.WriteString("]")
 
-	return JSON{Value: json.RawMessage(b.String()), Index: 0, Error: aggErr}
+	return JsonCarrier{Value: json.RawMessage(b.String()), Index: 0, Error: aggErr}
 }

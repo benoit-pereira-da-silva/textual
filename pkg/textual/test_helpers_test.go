@@ -17,8 +17,6 @@ package textual
 import (
 	"context"
 	"sort"
-
-	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
 // collectWithContext drains a channel until it is closed or ctx is done.
@@ -42,7 +40,7 @@ func collectWithContext[T any](ctx context.Context, ch <-chan T) ([]T, error) {
 // sortByIndex sorts carriers by their GetIndex() value.
 // This is useful because router fan-in merges outputs concurrently, so order is
 // not deterministic.
-func sortByIndex[S carrier.Carrier[S]](items []S) {
+func sortByIndex[S Carrier[S]](items []S) {
 	sort.SliceStable(items, func(i, j int) bool {
 		return items[i].GetIndex() < items[j].GetIndex()
 	})

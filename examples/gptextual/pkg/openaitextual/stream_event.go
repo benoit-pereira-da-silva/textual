@@ -1,11 +1,4 @@
-package gptextual
-
-import (
-	"encoding/json"
-	"errors"
-
-	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
-)
+package openaitextual
 
 /*
 StreamEventType represents the semantic event types emitted by the OpenAI
@@ -150,19 +143,14 @@ type StreamEvent struct {
 	Text    string          `json:"text,omitempty"`
 	Code    string          `json:"code,omitempty"`
 	Message string          `json:"message,omitempty"`
-
-	// carrier.Carrier fields
-
-	Index int   `json:"index,omitempty"`
-	Error error `json:"error,omitempty"`
 }
 
 /*
 IsTerminal returns true if this event represents a terminal state
 for the stream (completed, failed, or error).
 */
-func (e StreamEvent) IsTerminal() bool {
-	switch StreamEventType(e.Type) {
+func (s StreamEvent) IsTerminal() bool {
+	switch StreamEventType(s.Type) {
 	case StreamEventResponseCompleted,
 		StreamEventResponseFailed,
 		StreamEventError:
@@ -175,52 +163,6 @@ func (e StreamEvent) IsTerminal() bool {
 /*
 IsTextDelta returns true if the event carries incremental text output.
 */
-func (e StreamEvent) IsTextDelta() bool {
-	return StreamEventType(e.Type) == StreamEventOutputTextDelta
-}
-
-///////////////////////////////////
-// carrier.Carrier implementation
-///////////////////////////////////
-
-func (s StreamEvent) UTF8String() carrier.UTF8String {
-	b, err := json.Marshal(s)
-	if err != nil {
-		panic(err)
-	}
-	return carrier.UTF8String(b)
-}
-
-func (s StreamEvent) FromUTF8String(str carrier.UTF8String) StreamEvent {
-	var se StreamEvent
-	err := json.Unmarshal([]byte(str), &se)
-	if err != nil {
-		se = se.WithError(err)
-	}
-	return se
-}
-
-func (s StreamEvent) WithIndex(idx int) StreamEvent {
-	s.Index = idx
-	return s
-}
-
-func (s StreamEvent) GetIndex() int {
-	return s.Index
-}
-
-func (s StreamEvent) WithError(err error) StreamEvent {
-	if err == nil {
-		return s
-	}
-	if s.Error == nil {
-		s.Error = err
-	} else {
-		s.Error = errors.Join(s.Error, err)
-	}
-	return s
-}
-
-func (s StreamEvent) GetError() error {
-	return s.Error
+func (s StreamEvent) IsTextDelta() bool {
+	return StreamEventType(s.Type) == StreamEventOutputTextDelta
 }

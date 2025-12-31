@@ -19,8 +19,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
 func TestIOReaderProcessor_Start_ScanLinesAndIndexes(t *testing.T) {
@@ -30,14 +28,14 @@ func TestIOReaderProcessor_Start_ScanLinesAndIndexes(t *testing.T) {
 	input := "a\nb\nc\n"
 	reader := strings.NewReader(input)
 
-	upper := ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-		return Async(ctx, in, func(_ context.Context, s carrier.String) carrier.String {
+	upper := ProcessorFunc[StringCarrier](func(ctx context.Context, in <-chan StringCarrier) <-chan StringCarrier {
+		return Async(ctx, in, func(_ context.Context, s StringCarrier) StringCarrier {
 			s.Value = strings.ToUpper(s.Value)
 			return s
 		})
 	})
 
-	p := NewIOReaderProcessor[carrier.String](upper, reader)
+	p := NewIOReaderProcessor[StringCarrier](upper, reader)
 	p.SetContext(ctx)
 
 	outCh := p.Start()
@@ -70,13 +68,13 @@ func TestIOReaderProcessor_CustomSplit_ReconstructsInput(t *testing.T) {
 	const input = "Hello, world!\nThis  is\ttextual.\n"
 	reader := strings.NewReader(input)
 
-	identity := ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-		return Async(ctx, in, func(_ context.Context, s carrier.String) carrier.String {
+	identity := ProcessorFunc[StringCarrier](func(ctx context.Context, in <-chan StringCarrier) <-chan StringCarrier {
+		return Async(ctx, in, func(_ context.Context, s StringCarrier) StringCarrier {
 			return s
 		})
 	})
 
-	p := NewIOReaderProcessor[carrier.String](identity, reader)
+	p := NewIOReaderProcessor[StringCarrier](identity, reader)
 	p.SetContext(ctx)
 	p.SetSplitFunc(ScanExpression)
 

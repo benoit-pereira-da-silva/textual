@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package carrier
+package textual
 
 import (
 	"errors"
@@ -20,7 +20,7 @@ import (
 	"strings"
 )
 
-// Parcel is a Carrier implementation designed for partial transformations.
+// Parcel is a Carrier and AggregatableCarrier implementation designed for partial transformations.
 //
 // It keeps the original input (`Text`) and a set of transformed spans
 // (`Fragments`). Each fragment references a rune-based range within `Text`
@@ -313,7 +313,7 @@ func (r Parcel) RawTexts() RawTexts {
 			})
 		}
 
-		// Advance the cursor to the end of the fragment, but never move it
+		// Advance the cursor to the end of the fragment but never move it
 		// backwards. This naturally merges overlapping fragments or multiple
 		// variants starting at the same position.
 		if cursor < end {

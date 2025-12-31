@@ -18,19 +18,17 @@ import (
 	"context"
 	"testing"
 	"time"
-
-	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
 func TestGlue_StickLeft_ComposesTranscoderThenProcessor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// String -> Parcel transcoder.
-	toParcel := TranscoderFunc[carrier.String, carrier.Parcel](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.Parcel {
-		return Async(ctx, in, func(ctx context.Context, t carrier.String) carrier.Parcel {
-			proto := carrier.Parcel{}
-			updated := proto.FromUTF8String(carrier.UTF8String("P:" + t.Value)).WithIndex(t.GetIndex())
+	// StringCarrier -> Parcel transcoder.
+	toParcel := TranscoderFunc[StringCarrier, Parcel](func(ctx context.Context, in <-chan StringCarrier) <-chan Parcel {
+		return Async(ctx, in, func(ctx context.Context, t StringCarrier) Parcel {
+			proto := Parcel{}
+			updated := proto.FromUTF8String(UTF8String("P:" + t.Value)).WithIndex(t.GetIndex())
 			if err := t.GetError(); err != nil {
 				updated = updated.WithError(err)
 			}
@@ -39,10 +37,10 @@ func TestGlue_StickLeft_ComposesTranscoderThenProcessor(t *testing.T) {
 	})
 
 	// Parcel -> Parcel processor.
-	appendSuffix := ProcessorFunc[carrier.Parcel](func(ctx context.Context, in <-chan carrier.Parcel) <-chan carrier.Parcel {
-		return Async(ctx, in, func(ctx context.Context, t carrier.Parcel) carrier.Parcel {
-			proto := carrier.Parcel{}
-			updated := proto.FromUTF8String(carrier.UTF8String(string(t.Text) + "|S")).WithIndex(t.GetIndex())
+	appendSuffix := ProcessorFunc[Parcel](func(ctx context.Context, in <-chan Parcel) <-chan Parcel {
+		return Async(ctx, in, func(ctx context.Context, t Parcel) Parcel {
+			proto := Parcel{}
+			updated := proto.FromUTF8String(UTF8String(string(t.Text) + "|S")).WithIndex(t.GetIndex())
 			if err := t.GetError(); err != nil {
 				updated = updated.WithError(err)
 			}
@@ -52,10 +50,10 @@ func TestGlue_StickLeft_ComposesTranscoderThenProcessor(t *testing.T) {
 
 	composed := StickLeft(toParcel, appendSuffix)
 
-	in := make(chan carrier.String, 1)
+	in := make(chan StringCarrier, 1)
 	outCh := composed.Apply(ctx, in)
 
-	in <- carrier.String{Value: "x", Index: 7}
+	in <- StringCarrier{Value: "x", Index: 7}
 	close(in)
 
 	items, err := collectWithContext(ctx, outCh)
@@ -77,19 +75,19 @@ func TestGlue_StickRight_ComposesProcessorThenTranscoder(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// String -> String processor.
-	appendA := ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-		return Async(ctx, in, func(ctx context.Context, t carrier.String) carrier.String {
+	// StringCarrier -> StringCarrier processor.
+	appendA := ProcessorFunc[StringCarrier](func(ctx context.Context, in <-chan StringCarrier) <-chan StringCarrier {
+		return Async(ctx, in, func(ctx context.Context, t StringCarrier) StringCarrier {
 			t.Value = t.Value + "A"
 			return t
 		})
 	})
 
-	// String -> Parcel transcoder.
-	toParcel := TranscoderFunc[carrier.String, carrier.Parcel](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.Parcel {
-		return Async(ctx, in, func(ctx context.Context, t carrier.String) carrier.Parcel {
-			proto := carrier.Parcel{}
-			updated := proto.FromUTF8String(carrier.UTF8String("P:" + t.Value)).WithIndex(t.GetIndex())
+	// StringCarrier -> Parcel transcoder.
+	toParcel := TranscoderFunc[StringCarrier, Parcel](func(ctx context.Context, in <-chan StringCarrier) <-chan Parcel {
+		return Async(ctx, in, func(ctx context.Context, t StringCarrier) Parcel {
+			proto := Parcel{}
+			updated := proto.FromUTF8String(UTF8String("P:" + t.Value)).WithIndex(t.GetIndex())
 			if err := t.GetError(); err != nil {
 				updated = updated.WithError(err)
 			}
@@ -99,10 +97,10 @@ func TestGlue_StickRight_ComposesProcessorThenTranscoder(t *testing.T) {
 
 	composed := StickRight(appendA, toParcel)
 
-	in := make(chan carrier.String, 1)
+	in := make(chan StringCarrier, 1)
 	outCh := composed.Apply(ctx, in)
 
-	in <- carrier.String{Value: "x", Index: 3}
+	in <- StringCarrier{Value: "x", Index: 3}
 	close(in)
 
 	items, err := collectWithContext(ctx, outCh)

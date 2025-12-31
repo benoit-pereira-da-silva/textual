@@ -2,7 +2,8 @@
 + Glue helpers function to compose a Transcoder and a Processor.
 + Introduced `textual.Transcoder` to transcode one Type to another. 
   + `textual.IOReaderTranscoder` connects an io.Reader to a Transcoder by scanning.
-+ Added `textual.JSON` carrier, and `ScanJSON` `bufio` split function.
++ Added `textual.JSONCarrier` carrier
++ Added `ScanJSON` `bufio` split function.
 + Added error support to carriers (`WithError(err error)` / `GetError() error`) so processors can report per-item failures without breaking the stream.
 + Updated documentation and comments to reflect the Carrier / Parcel terminology.
 + Updated client helpers:

@@ -16,8 +16,6 @@ package textual
 
 import (
 	"context"
-
-	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
 // StickLeft composes:
@@ -29,7 +27,7 @@ import (
 //
 // If the processor is nil, StickLeft returns the transcoder unchanged.
 // If the transcoder is nil, StickLeft returns nil.
-func StickLeft[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]](transcoder Transcoder[S1, S2], processor Processor[S2]) Transcoder[S1, S2] {
+func StickLeft[S1 Carrier[S1], S2 Carrier[S2]](transcoder Transcoder[S1, S2], processor Processor[S2]) Transcoder[S1, S2] {
 	if transcoder == nil {
 		return nil
 	}
@@ -54,7 +52,7 @@ func StickLeft[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]](transcoder Transc
 //
 // If the processor is nil, StickRight returns the transcoder unchanged.
 // If the transcoder is nil, StickRight returns nil.
-func StickRight[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]](processor Processor[S1], transcoder Transcoder[S1, S2]) Transcoder[S1, S2] {
+func StickRight[S1 Carrier[S1], S2 Carrier[S2]](processor Processor[S1], transcoder Transcoder[S1, S2]) Transcoder[S1, S2] {
 	if transcoder == nil {
 		return nil
 	}

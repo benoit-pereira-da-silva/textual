@@ -16,8 +16,6 @@ package textual
 
 import (
 	"context"
-
-	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
 // SyncApply applies a Processor to a single input value and returns a single
@@ -29,7 +27,7 @@ import (
 //   - N>1     : SyncApply aggregates them using S.Aggregate.
 //
 // Context cancellation is respected while reading the output channel.
-func SyncApply[S carrier.AggregatableCarrier[S], P Processor[S]](ctx context.Context, p P, in S) S {
+func SyncApply[S AggregatableCarrier[S], P Processor[S]](ctx context.Context, p P, in S) S {
 	if ctx == nil {
 		ctx = context.Background()
 	}

@@ -19,15 +19,13 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
 // procSuffixParcel returns a Processor[Parcel] that appends suffix to Text.
-func procSuffix(suffix string) Processor[carrier.String] {
-	return ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-		return Async(ctx, in, func(ctx context.Context, t carrier.String) carrier.String {
-			proto := *new(carrier.String)
+func procSuffix(suffix string) Processor[StringCarrier] {
+	return ProcessorFunc[StringCarrier](func(ctx context.Context, in <-chan StringCarrier) <-chan StringCarrier {
+		return Async(ctx, in, func(ctx context.Context, t StringCarrier) StringCarrier {
+			proto := *new(StringCarrier)
 			updated := proto.FromUTF8String(t.UTF8String() + suffix).WithIndex(t.GetIndex())
 			if err := t.GetError(); err != nil {
 				updated = updated.WithError(err)
@@ -41,16 +39,16 @@ func TestChain_SequentialAndIgnoresNil(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	chain := NewChain[carrier.String](
+	chain := NewChain[StringCarrier](
 		procSuffix("A"),
 		nil, // should be ignored
 		procSuffix("B"),
 	)
 
-	in := make(chan carrier.String, 1)
+	in := make(chan StringCarrier, 1)
 	outCh := chain.Apply(ctx, in)
 
-	in <- carrier.String{Value: "X", Index: 42}
+	in <- StringCarrier{Value: "X", Index: 42}
 	close(in)
 
 	items, err := collectWithContext(ctx, outCh)
@@ -70,10 +68,10 @@ func TestChain_SequentialAndIgnoresNil(t *testing.T) {
 }
 
 func TestChain_NoProcessorsReturnsInputChannel(t *testing.T) {
-	chain := NewChain[carrier.String]()
+	chain := NewChain[StringCarrier]()
 
-	in := make(chan carrier.String)
-	var inR <-chan carrier.String = in
+	in := make(chan StringCarrier)
+	var inR <-chan StringCarrier = in
 
 	out := chain.Apply(context.Background(), inR)
 	if out != inR {
@@ -86,13 +84,13 @@ func TestRouter_PassThroughWhenNoRoutes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	router := NewRouter[carrier.String](RoutingStrategyBroadcast /* no processors */)
+	router := NewRouter[StringCarrier](RoutingStrategyBroadcast /* no processors */)
 
-	in := make(chan carrier.String, 2)
+	in := make(chan StringCarrier, 2)
 	outCh := router.Apply(ctx, in)
 
-	in <- carrier.String{Value: "one", Index: 0}
-	in <- carrier.String{Value: "two", Index: 1}
+	in <- StringCarrier{Value: "one", Index: 0}
+	in <- StringCarrier{Value: "two", Index: 1}
 	close(in)
 
 	items, err := collectWithContext(ctx, outCh)
@@ -116,20 +114,20 @@ func TestRouter_FirstMatchAndUnmatchedPassThrough(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	router := NewRouter[carrier.String](RoutingStrategyFirstMatch)
+	router := NewRouter[StringCarrier](RoutingStrategyFirstMatch)
 
-	predA := func(_ context.Context, s carrier.String) bool {
+	predA := func(_ context.Context, s StringCarrier) bool {
 		return strings.HasPrefix(s.Value, "A")
 	}
 
 	router.AddRoute(predA, procSuffix("|r1"))
 	router.AddRoute(predA, procSuffix("|r2")) // should NOT receive "A..." in FirstMatch
 
-	in := make(chan carrier.String, 2)
+	in := make(chan StringCarrier, 2)
 	outCh := router.Apply(ctx, in)
 
-	in <- carrier.String{Value: "A", Index: 0}
-	in <- carrier.String{Value: "B", Index: 1} // unmatched => passthrough
+	in <- StringCarrier{Value: "A", Index: 0}
+	in <- StringCarrier{Value: "B", Index: 1} // unmatched => passthrough
 	close(in)
 
 	items, err := collectWithContext(ctx, outCh)
@@ -154,18 +152,18 @@ func TestRouter_BroadcastToAllEligibleRoutes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	router := NewRouter[carrier.String](RoutingStrategyBroadcast)
+	router := NewRouter[StringCarrier](RoutingStrategyBroadcast)
 
-	predX := func(_ context.Context, s carrier.String) bool {
+	predX := func(_ context.Context, s StringCarrier) bool {
 		return strings.Contains(s.Value, "x")
 	}
 	router.AddRoute(predX, procSuffix("|a"))
 	router.AddRoute(predX, procSuffix("|b"))
 
-	in := make(chan carrier.String, 1)
+	in := make(chan StringCarrier, 1)
 	outCh := router.Apply(ctx, in)
 
-	in <- carrier.String{Value: "x", Index: 0}
+	in <- StringCarrier{Value: "x", Index: 0}
 	close(in)
 
 	items, err := collectWithContext(ctx, outCh)
@@ -191,15 +189,15 @@ func TestRouter_RoundRobinDistributesAcrossRoutes(t *testing.T) {
 
 	p1 := procSuffix("|p1")
 	p2 := procSuffix("|p2")
-	router := NewRouter[carrier.String](RoutingStrategyRoundRobin, p1, p2)
+	router := NewRouter[StringCarrier](RoutingStrategyRoundRobin, p1, p2)
 
-	in := make(chan carrier.String, 4)
+	in := make(chan StringCarrier, 4)
 	outCh := router.Apply(ctx, in)
 
-	in <- carrier.String{Value: "i0", Index: 0}
-	in <- carrier.String{Value: "i1", Index: 1}
-	in <- carrier.String{Value: "i2", Index: 2}
-	in <- carrier.String{Value: "i3", Index: 3}
+	in <- StringCarrier{Value: "i0", Index: 0}
+	in <- StringCarrier{Value: "i1", Index: 1}
+	in <- StringCarrier{Value: "i2", Index: 2}
+	in <- StringCarrier{Value: "i3", Index: 3}
 	close(in)
 
 	items, err := collectWithContext(ctx, outCh)

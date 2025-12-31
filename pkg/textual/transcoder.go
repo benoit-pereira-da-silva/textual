@@ -16,8 +16,6 @@ package textual
 
 import (
 	"context"
-
-	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
 // Transcoder is a chainable processing stage that converts a stream of carriers
@@ -41,7 +39,7 @@ import (
 //
 // The returned channel must be non-nil. Callers are expected to consume from
 // the returned channel until it is closed.
-type Transcoder[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]] interface {
+type Transcoder[S1 Carrier[S1], S2 Carrier[S2]] interface {
 	// Apply starts the transcoding stage.
 	//
 	// The call should return quickly, typically after starting any necessary
@@ -54,10 +52,10 @@ type Transcoder[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]] interface {
 //
 // It allows plain functions to be used as Transcoder values:
 //
-//	t := TranscoderFunc[carrier.String, carrier.Parcel](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.Parcel {
+//	t := TranscoderFunc[carrier.StringCarrier, carrier.Parcel](func(ctx context.Context, in <-chan carrier.StringCarrier) <-chan carrier.Parcel {
 //		proto := carrier.Parcel{}
-//		return Async(ctx, in, func(ctx context.Context, s carrier.String) carrier.Parcel {
-//			// Convert String -> Parcel.
+//		return Async(ctx, in, func(ctx context.Context, s carrier.StringCarrier) carrier.Parcel {
+//			// Convert StringCarrier -> Parcel.
 //			res := proto.FromUTF8String(carrier.UTF8String("P:" + s.Value)).WithIndex(s.GetIndex())
 //
 //			// Preserve per-item error as data.
@@ -69,7 +67,7 @@ type Transcoder[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]] interface {
 //	})
 //
 // This can make it easier to construct lightweight transcoders inline.
-type TranscoderFunc[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2]] func(ctx context.Context, in <-chan S1) <-chan S2
+type TranscoderFunc[S1 Carrier[S1], S2 Carrier[S2]] func(ctx context.Context, in <-chan S1) <-chan S2
 
 // Apply calls f(ctx, in).
 func (f TranscoderFunc[S1, S2]) Apply(ctx context.Context, in <-chan S1) <-chan S2 {

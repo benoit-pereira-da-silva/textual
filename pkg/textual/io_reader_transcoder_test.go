@@ -17,8 +17,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
 func TestIOReaderTranscoder_Start_ScanLinesAndIndexes(t *testing.T) {
@@ -28,11 +26,11 @@ func TestIOReaderTranscoder_Start_ScanLinesAndIndexes(t *testing.T) {
 	input := "hello\nworld\n"
 	reader := strings.NewReader(input)
 
-	// String -> Parcel transcoder that prefixes and preserves index.
-	tprefix := TranscoderFunc[carrier.String, carrier.Parcel](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.Parcel {
-		proto := carrier.Parcel{}
-		return Async(ctx, in, func(_ context.Context, s carrier.String) carrier.Parcel {
-			res := proto.FromUTF8String(carrier.UTF8String("P:" + s.Value)).WithIndex(s.GetIndex())
+	// StringCarrier -> Parcel transcoder that prefixes and preserves index.
+	tprefix := TranscoderFunc[StringCarrier, Parcel](func(ctx context.Context, in <-chan StringCarrier) <-chan Parcel {
+		proto := Parcel{}
+		return Async(ctx, in, func(_ context.Context, s StringCarrier) Parcel {
+			res := proto.FromUTF8String(UTF8String("P:" + s.Value)).WithIndex(s.GetIndex())
 			if err := s.GetError(); err != nil {
 				res = res.WithError(err)
 			}
@@ -40,7 +38,7 @@ func TestIOReaderTranscoder_Start_ScanLinesAndIndexes(t *testing.T) {
 		})
 	})
 
-	ioT := NewIOReaderTranscoder[carrier.String](tprefix, reader)
+	ioT := NewIOReaderTranscoder[StringCarrier](tprefix, reader)
 	ioT.SetContext(ctx)
 
 	outCh := ioT.Start()
@@ -76,10 +74,10 @@ func TestIOReaderTranscoder_CustomSplit_ScanJSON(t *testing.T) {
 	input := " \n,\t{\"a\":1}  [1,2,{\"b\":\"x\"}]  {\"c\":\"{[\\\"}]\"}\n"
 	reader := strings.NewReader(input)
 
-	// String -> JSON transcoder that preserves index.
-	toJSON := TranscoderFunc[carrier.String, carrier.JSON](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.JSON {
-		proto := carrier.JSON{}
-		return Async(ctx, in, func(_ context.Context, s carrier.String) carrier.JSON {
+	// StringCarrier -> JsonCarrier transcoder that preserves index.
+	toJSON := TranscoderFunc[StringCarrier, JsonCarrier](func(ctx context.Context, in <-chan StringCarrier) <-chan JsonCarrier {
+		proto := JsonCarrier{}
+		return Async(ctx, in, func(_ context.Context, s StringCarrier) JsonCarrier {
 			res := proto.FromUTF8String(s.UTF8String()).WithIndex(s.GetIndex())
 			if err := s.GetError(); err != nil {
 				res = res.WithError(err)
@@ -88,7 +86,7 @@ func TestIOReaderTranscoder_CustomSplit_ScanJSON(t *testing.T) {
 		})
 	})
 
-	ioT := NewIOReaderTranscoder[carrier.String](toJSON, reader)
+	ioT := NewIOReaderTranscoder[StringCarrier](toJSON, reader)
 	ioT.SetContext(ctx)
 	ioT.SetSplitFunc(ScanJSON)
 

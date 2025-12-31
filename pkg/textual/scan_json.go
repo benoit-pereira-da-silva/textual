@@ -20,7 +20,7 @@ import (
 )
 
 // ScanJSON is a bufio.SplitFunc that tokenizes an input stream into top-level
-// JSON values (objects `{...}` or arrays `[...]`).
+// JsonCarrier values (objects `{...}` or arrays `[...]`).
 //
 // Framing behaviour:
 //
@@ -29,12 +29,12 @@ import (
 //     transport might insert.
 //   - Once an opening `{` or `[` is found, nesting is tracked until the
 //     matching closing delimiter is found.
-//   - JSON strings are recognized; braces/brackets inside strings do not affect
+//   - JsonCarrier strings are recognized; braces/brackets inside strings do not affect
 //     nesting. Basic escape handling is implemented so `\"` does not end a string.
-//   - If atEOF is true and a JSON value is still open, ScanJSON returns
+//   - If atEOF is true and a JsonCarrier value is still open, ScanJSON returns
 //     io.ErrUnexpectedEOF.
 //
-// This split func does NOT fully validate JSON; it only provides robust framing
+// This split func does NOT fully validate JsonCarrier; it only provides robust framing
 // suitable for streaming.
 //
 // Example:
@@ -42,7 +42,7 @@ import (
 //	scanner := bufio.NewScanner(r)
 //	scanner.Split(textual.ScanJSON)
 //	for scanner.Scan() {
-//	    token := scanner.Bytes() // one complete JSON value
+//	    token := scanner.Bytes() // one complete JsonCarrier value
 //	    // ...
 //	}
 func ScanJSON(data []byte, atEOF bool) (advance int, token []byte, err error) {
@@ -72,7 +72,7 @@ func ScanJSON(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	// in its internal buffer. In that situation, returning token == nil can make
 	// the scanner stop prematurely.
 	//
-	// To support multiple JSON values in a single buffer (e.g. "  {...}  [...]"),
+	// To support multiple JsonCarrier values in a single buffer (e.g. "  {...}  [...]"),
 	// we must be able to return a complete token even when it is preceded by
 	// ignored bytes.
 

@@ -19,8 +19,6 @@ import (
 	"context"
 	"io"
 	"time"
-
-	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
 // IOReaderTranscoder connects an io.Reader to a Transcoder by scanning the input
@@ -54,7 +52,7 @@ import (
 //
 // Note: methods such as FromUTF8String are typically called on the zero value
 // of S1, so implementations must not depend on receiver state.
-type IOReaderTranscoder[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2], T Transcoder[S1, S2]] struct {
+type IOReaderTranscoder[S1 Carrier[S1], S2 Carrier[S2], T Transcoder[S1, S2]] struct {
 	reader     io.Reader
 	splitFunc  bufio.SplitFunc // splitFunc defines the bufio.SplitFunc used to tokenize the input from the io.Reader.
 	transcoder T
@@ -69,7 +67,7 @@ type IOReaderTranscoder[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2], T Transc
 // NewIOReaderTranscoder constructs a new IOReaderTranscoder using the provided
 // transcoder and reader. By default, it uses bufio.ScanLines as a split function
 // and a background context created on the first Start / StartWithTimeout.
-func NewIOReaderTranscoder[S1 carrier.Carrier[S1], S2 carrier.Carrier[S2], T Transcoder[S1, S2]](transcoder T, reader io.Reader) *IOReaderTranscoder[S1, S2, T] {
+func NewIOReaderTranscoder[S1 Carrier[S1], S2 Carrier[S2], T Transcoder[S1, S2]](transcoder T, reader io.Reader) *IOReaderTranscoder[S1, S2, T] {
 	return &IOReaderTranscoder[S1, S2, T]{
 		splitFunc:  bufio.ScanLines,
 		reader:     reader,

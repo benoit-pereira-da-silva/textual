@@ -16,8 +16,6 @@ package textual
 
 import (
 	"context"
-
-	"github.com/benoit-pereira-da-silva/textual/pkg/carrier"
 )
 
 // Processor is a chainable processing stage for a textual pipeline.
@@ -39,7 +37,7 @@ import (
 //
 // The returned channel must be non-nil. Callers are expected to consume from
 // the returned channel until it is closed.
-type Processor[S carrier.Carrier[S]] interface {
+type Processor[S Carrier[S]] interface {
 	// Apply starts the processing stage.
 	//
 	// The call should return quickly, typically after starting any necessary
@@ -52,15 +50,15 @@ type Processor[S carrier.Carrier[S]] interface {
 //
 // It allows plain functions to be used as Processor values:
 //
-//	p := ProcessorFunc[carrier.String](func(ctx context.Context, in <-chan carrier.String) <-chan carrier.String {
-//		return Async(ctx, in, func(ctx context.Context, s carrier.String) carrier.String {
+//	p := ProcessorFunc[carrier.StringCarrier](func(ctx context.Context, in <-chan carrier.StringCarrier) <-chan carrier.StringCarrier {
+//		return Async(ctx, in, func(ctx context.Context, s carrier.StringCarrier) carrier.StringCarrier {
 //			s.Value = strings.ToUpper(s.Value)
 //			return s
 //		})
 //	})
 //
 // This can make it easier to construct lightweight processors inline.
-type ProcessorFunc[S carrier.Carrier[S]] func(ctx context.Context, in <-chan S) <-chan S
+type ProcessorFunc[S Carrier[S]] func(ctx context.Context, in <-chan S) <-chan S
 
 // Apply calls f(ctx, in).
 func (f ProcessorFunc[S]) Apply(ctx context.Context, in <-chan S) <-chan S {

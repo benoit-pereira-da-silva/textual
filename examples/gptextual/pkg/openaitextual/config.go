@@ -1,4 +1,4 @@
-package gptextual
+package openaitextual
 
 import "os"
 
