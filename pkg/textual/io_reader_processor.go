@@ -18,13 +18,14 @@ import (
 	"bufio"
 	"context"
 	"io"
+	"runtime/debug"
 	"time"
 )
 
 // IOReaderProcessor connects an io.Reader to a Processor by scanning the input
 // stream into tokens.
 //
-// Tokenization is controlled by a bufio.SplitFunc (default: bufio.ScanLines).
+// Tokenization is controlled by a bufio.SplitFunc (default: ScanLines).
 // Each token is converted into the carrier type S via:
 //
 //	prototype.FromUTF8String(token).WithIndex(i)
@@ -35,6 +36,17 @@ import (
 // bytes represent UTF-8 text. If your source encoding is not UTF‑8, decode the
 // reader first (for example with NewUTF8Reader) before plugging it here.
 //
+// Panic handling:
+//
+// Many processors/transcoders in this package are typically implemented with
+// Async/AsyncEmitter, which recover panics and store them in a PanicStore carried
+// by the context (see WithPanicStore).
+//
+// IOReaderProcessor is a pipeline boundary adapter, so it ensures that a
+// PanicStore is always present on its context (reusing one if the caller already
+// attached it) and exposes it via PanicStore() so a supervisor can surface
+// failures deterministically.
+//
 // Usage pattern:
 //
 //	p := NewIOReaderProcessor(myProcessor, reader)
@@ -42,6 +54,13 @@ import (
 //	p.SetSplitFunc(...)    // optional, must be called before Start / StartWithTimeout
 //	out := p.Start()       // or p.StartWithTimeout(...)
 //	for item := range out { /* consume results */ }
+//
+//	ps := p.PanicStore()
+//	if ps != nil {
+//	    if info, ok := ps.Load(); ok {
+//	        // surface the fatal fault
+//	    }
+//	}
 //
 // Start / StartWithTimeout spawn a goroutine that scans the input and feeds the
 // processor's input channel. Stop cancels the context, which should cause the
@@ -62,11 +81,15 @@ type IOReaderProcessor[S Carrier[S], P Processor[S]] struct {
 	// context. cancel can be nil until a cancellable context is created.
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	// panicStore is the PanicStore carried by ctx (either inherited from the
+	// provided context or created internally).
+	panicStore *PanicStore
 }
 
 // NewIOReaderProcessor constructs a new IOReaderProcessor using the provided
-// processor and reader. By default, it uses bufio.ScanLines as a split function
-// and a background context created on the first Start / StartWithTimeout.
+// processor and reader. By default, it uses ScanLines as a split function and a
+// background context created on the first Start / StartWithTimeout.
 func NewIOReaderProcessor[S Carrier[S], P Processor[S]](processor P, reader io.Reader) *IOReaderProcessor[S, P] {
 	return &IOReaderProcessor[S, P]{
 		splitFunc: ScanLines,
@@ -75,37 +98,73 @@ func NewIOReaderProcessor[S Carrier[S], P Processor[S]](processor P, reader io.R
 	}
 }
 
+// PanicStore returns the PanicStore attached to the processor's context.
+//
+// If the caller provided a context that already carries a PanicStore (via
+// WithPanicStore), that store is returned. Otherwise, IOReaderProcessor creates
+// one internally the first time Start/StartWithTimeout (or SetContext) ensures a
+// context.
+//
+// The returned store is intended to be checked by the pipeline supervisor after
+// the output channel has been drained.
+func (p *IOReaderProcessor[S, P]) PanicStore() *PanicStore {
+	return p.panicStore
+}
+
 // SetContext sets the base context used by Start / StartWithTimeout.
 //
 // It must be called before Start / StartWithTimeout. The provided context is
 // wrapped in a cancellable child so that Stop can terminate the processing
 // loop even if the parent context is still alive.
+//
+// SetContext also ensures that a PanicStore is available on the derived context
+// so that recovered panics from Async-based stages can be observed via
+// p.PanicStore().
 func (p *IOReaderProcessor[S, P]) SetContext(ctx context.Context) {
 	if ctx == nil {
 		// Avoid keeping a nil context internally; always fall back to Background.
 		ctx = context.Background()
 	}
-	p.ctx, p.cancel = context.WithCancel(ctx)
+
+	// If a previous derived context existed, cancel it to release resources.
+	// This is safe: canceling a child context does not cancel the parent.
+	if p.cancel != nil {
+		p.cancel()
+	}
+
+	p.ctx = ctx
+	p.cancel = nil
+	p.ensureContext()
 }
 
 // SetSplitFunc customizes the tokenization strategy.
 //
-// It must be called before Start / StartWithTimeout. If left unset, bufio.ScanLines
-// is used, which yields a token per line (without the trailing newline).
+// It must be called before Start / StartWithTimeout. If left unset, ScanLines
+// is used, which yields a token per line (including the trailing newline, when present).
 func (p *IOReaderProcessor[S, P]) SetSplitFunc(splitFunc bufio.SplitFunc) {
 	p.splitFunc = splitFunc
 }
 
-// ensureContext initializes ctx / cancel if needed.
+// ensureContext initializes ctx / cancel if needed and ensures a PanicStore is attached.
 //
-// When a context has been injected via SetContext, it is reused. If ctx is set
-// but cancel is nil (for instance, after manual field initialization), a
-// cancellable child context is derived so that Stop can be used safely.
+// When a context has been injected via SetContext, it is reused. If ctx is nil,
+// Background is used. A cancellable child context is derived so that Stop can be
+// used safely.
 func (p *IOReaderProcessor[S, P]) ensureContext() {
-	switch {
-	case p.ctx == nil && p.cancel == nil:
-		p.ctx, p.cancel = context.WithCancel(context.Background())
-	case p.ctx != nil && p.cancel == nil:
+	if p.ctx == nil {
+		p.ctx = context.Background()
+	}
+
+	// Ensure a PanicStore is present so recovered panics are never silently dropped.
+	if ps := PanicStoreFromContext(p.ctx); ps != nil {
+		p.panicStore = ps
+	} else {
+		p.ctx, p.panicStore = WithPanicStore(p.ctx)
+	}
+
+	// Ensure the context is cancellable so Stop can always terminate the loop.
+	// If cancel already exists (e.g. StartWithTimeout), keep it.
+	if p.cancel == nil {
 		p.ctx, p.cancel = context.WithCancel(p.ctx)
 	}
 }
@@ -132,12 +191,62 @@ func (p *IOReaderProcessor[S, P]) Start() <-chan S {
 	in := make(chan S)
 
 	// Start the processor on the stream of S values.
-	out := p.processor.Apply(p.ctx, in)
+	// Defensive recovery here ensures that panics during wiring (or contract
+	// violations like returning a nil channel) are surfaced via PanicStore
+	// rather than crashing the process.
+	out := func() (out <-chan S) {
+		defer func() {
+			if r := recover(); r != nil {
+				if ps := PanicStoreFromContext(p.ctx); ps != nil {
+					ps.Store(r, debug.Stack())
+				}
+				if p.cancel != nil {
+					p.cancel()
+				}
+				ch := make(chan S)
+				close(ch)
+				out = ch
+			}
+		}()
+
+		out = p.processor.Apply(p.ctx, in)
+		if out == nil {
+			panic("textual: Processor.Apply returned a nil channel")
+		}
+		return out
+	}()
 
 	// Goroutine responsible for scanning and feeding the input channel.
 	go func() {
 		prototype := *new(S)
-		defer close(in)
+
+		// One finalizer handles both normal completion and panic recovery.
+		defer func() {
+			if r := recover(); r != nil {
+				if ps := PanicStoreFromContext(p.ctx); ps != nil {
+					ps.Store(r, debug.Stack())
+				}
+				if p.cancel != nil {
+					p.cancel()
+				}
+			}
+
+			// Close the input channel. If a downstream stage violated the
+			// contract and closed it, record that as a fatal fault too.
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						if ps := PanicStoreFromContext(p.ctx); ps != nil {
+							ps.Store(r, debug.Stack())
+						}
+						if p.cancel != nil {
+							p.cancel()
+						}
+					}
+				}()
+				close(in)
+			}()
+		}()
 
 		counter := 0
 		for {
