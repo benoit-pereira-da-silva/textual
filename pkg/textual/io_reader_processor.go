@@ -69,7 +69,7 @@ type IOReaderProcessor[S Carrier[S], P Processor[S]] struct {
 // and a background context created on the first Start / StartWithTimeout.
 func NewIOReaderProcessor[S Carrier[S], P Processor[S]](processor P, reader io.Reader) *IOReaderProcessor[S, P] {
 	return &IOReaderProcessor[S, P]{
-		splitFunc: bufio.ScanLines,
+		splitFunc: ScanLines,
 		reader:    reader,
 		processor: processor,
 	}

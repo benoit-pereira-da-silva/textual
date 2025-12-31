@@ -69,7 +69,7 @@ type IOReaderTranscoder[S1 Carrier[S1], S2 Carrier[S2], T Transcoder[S1, S2]] st
 // and a background context created on the first Start / StartWithTimeout.
 func NewIOReaderTranscoder[S1 Carrier[S1], S2 Carrier[S2], T Transcoder[S1, S2]](transcoder T, reader io.Reader) *IOReaderTranscoder[S1, S2, T] {
 	return &IOReaderTranscoder[S1, S2, T]{
-		splitFunc:  bufio.ScanLines,
+		splitFunc:  ScanLines,
 		reader:     reader,
 		transcoder: transcoder,
 	}
