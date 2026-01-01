@@ -1,27 +1,34 @@
 # textual-swift
 
-Lightweight Swift utilities to work with `textual` values in iOS / macOS clients.
+Lightweight Swift utilities to work with values produced by the Go `textual` package.
 
-This module is the client-side Swift counterpart of the Go `textual`:
+This Swift helper intentionally mirrors the **current** Go implementation (no legacy/retro compatibility). It focuses on:
 
-- `Parcel.rawTexts()` – compute the raw segments of a text that are **not** covered by any fragment.
-- `Parcel.render()` – merge transformed fragments and raw text back into a single output string.
-- A minimal `UTF8String` helper (mirrors Go’s `textual.String`) when you only need plain text + index + error.
-- A minimal `JSON` helper (mirrors Go’s `textual.JSON`) when you want to carry raw JSON values with index + error.
-- `scanJSON(data:atEOF:)` framing helper to split a byte stream into top-level JSON values (object `{...}` or array `[...]`).
-- `EncodingID` catalogue – mirror of the Go `EncodingID` enum and `nameToEncoding` dictionary.
+- Carrier data structures (`StringCarrier`, `JsonCarrier`, `JsonGenericCarrier<T>`, `CsvCarrier`, `XmlCarrier`, `Parcel`)
+- `Parcel.rawTexts()` and `Parcel.render()` logic aligned with the Go `Parcel.RawTexts()` / `Parcel.UTF8String()`
+- Streaming framing helpers equivalent to the Go `bufio.SplitFunc` helpers:
+  `scanLines`, `scanExpression`, `scanJSON`, `scanCSV`, `scanXML`
+- `EncodingID` catalogue + name lookup helpers aligned with Go `encoding.go`
 
-No networking or transcoding is implemented here on purpose: this file is
-transport-agnostic and only deals with in-memory values.
+No networking is implemented here. This module is transport-agnostic and only deals with in-memory values.
 
 ## Features
 
 - ✅ Structs matching the Go `Parcel`, `Fragment`, and `RawText` layout.
 - ✅ `rawTexts()` and `render()` logic aligned with the Go implementation.
-- ✅ Minimal `UTF8String` carrier helper mirroring Go’s `textual.String`.
-- ✅ Minimal `JSON` carrier helper mirroring Go’s `textual.JSON`.
-- ✅ `scanJSON(...)` tokenizer helper for JSON framing.
-- ✅ `EncodingID` enum with the same numeric values as the Go / JS versions.
+- ✅ Carrier helpers matching the Go carriers:
+  - `StringCarrier`
+  - `JsonCarrier` (uses `RawJSON` to mirror Go `json.RawMessage` semantics)
+  - `JsonGenericCarrier<T>`
+  - `CsvCarrier`
+  - `XmlCarrier`
+- ✅ Framing helpers to split byte streams into tokens:
+  - `scanLines` – keep trailing `\n` when present
+  - `scanExpression` – whitespace + word core + trailing whitespace (word-centric tokens)
+  - `scanJSON` – top-level JSON objects/arrays, with leading noise ignored
+  - `scanCSV` – CSV records with correct handling of quoted fields
+  - `scanXML` – top-level XML elements with robust framing
+- ✅ `EncodingID` enum with the same numeric values as the Go version.
 - ✅ `EncodingID.nameToEncoding` and `EncodingID.parse(_:)` helpers.
 - ✅ `Codable` conformance for straightforward JSON decoding.
 
@@ -37,10 +44,12 @@ There are no external dependencies other than `Foundation`.
 ## Data model
 
 ```swift
+public typealias UTF8String = String
+
 public struct Fragment: Codable, Equatable {
     public var transformed: String
-    public var pos: Int      // scalar index in original text
-    public var len: Int      // scalar length
+    public var pos: Int      // Unicode-scalar index in original text
+    public var len: Int      // Unicode-scalar length
     public var confidence: Double
     public var variant: Int
 }
@@ -52,38 +61,50 @@ public struct RawText: Codable, Equatable {
 }
 
 public struct Parcel: Codable, Equatable {
-    public var index: Int
+    public var index: Int          // -1 means unset (mirrors Go)
     public var text: String
     public var fragments: [Fragment]
     public var error: String?
 }
 
-// Minimal carrier mirroring Go textual.String
-public struct UTF8String: Codable, Equatable {
+public struct StringCarrier: Codable, Equatable {
     public var value: String
     public var index: Int
     public var error: String?
 }
 
-// Minimal JSON carrier mirroring Go textual.JSON
-public struct JSON: Codable, Equatable {
-    public var value: Data
+public struct RawJSON: Codable, Equatable {
+    public var bytes: Data         // UTF-8 bytes for a JSON value
+}
+
+public struct JsonCarrier: Codable, Equatable {
+    public var value: RawJSON      // mirrors Go `json.RawMessage`
+    public var index: Int
+    public var error: String?
+}
+
+public struct CsvCarrier: Codable, Equatable {
+    public var value: String       // one CSV record (no trailing newline)
+    public var index: Int
+    public var error: String?
+}
+
+public struct XmlCarrier: Codable, Equatable {
+    public var value: String       // one XML element fragment (UTF-8)
     public var index: Int
     public var error: String?
 }
 ```
 
-Positions and lengths are expressed in **Unicode scalars**, which maps to Go’s
-`rune` indexing for UTF‑8 strings.
+Positions and lengths in `Parcel` are expressed in **Unicode scalars**, which maps to Go’s `rune` indexing for UTF‑8 strings.
 
 ## Decoding from JSON
 
-The struct layout is compatible with the JSON produced by the Go backend.
+The struct layout is compatible with JSON produced by the Go backend.
 
 ```swift
 import Foundation
 
-// Assuming `data` is a Data value from URLSession or WebSocket.
 let decoder = JSONDecoder()
 let parcel = try decoder.decode(Parcel.self, from: data)
 ```
@@ -109,31 +130,52 @@ let rawParts: [RawText] = p.rawTexts()
 let rendered: String = p.render()
 ```
 
-You can also create Parcels directly in Swift, mirroring the JS `input(...)` helper:
+You can also create Parcels directly in Swift:
 
 ```swift
-let p = input("Hello, café")            // index = -1, no fragments
-let rendered = p.render()               // -> "Hello, café"
+let p = input("Hello, café")     // index = -1, no fragments
+let rendered = p.render()        // -> "Hello, café"
 ```
 
-## Minimal UTF8String carrier
+## Minimal StringCarrier
 
-Use `UTF8String` when you only need to carry plain UTF‑8 text with an index and
-an optional error string:
+Use `StringCarrier` when you only need to carry plain UTF‑8 text with an index and an optional error string:
 
 ```swift
-let s = utf8String("plain token").withIndex(42)
+let s = StringCarrier(value: "plain token").withIndex(42)
 print(s.utf8String()) // "plain token"
 ```
 
-This mirrors the role of Go’s `textual.String`.
+This mirrors the role of Go’s `textual.StringCarrier`.
 
-## JSON framing: scanJSON
+## JSON carrier: JsonCarrier
 
-When you receive a stream containing concatenated JSON values (optionally with
-noise between them), you can frame it with `scanJSON`.
+`JsonCarrier` mirrors Go’s `textual.JsonCarrier`. Its `value` encodes/decodes as a **nested JSON value** (not a quoted string), matching Go `json.RawMessage`.
 
-Rules:
+```swift
+let j = JsonCarrier(value: RawJSON(utf8String: #"{"a":[1,2,3]}"#))
+print(j.utf8String()) // {"a":[1,2,3]}
+```
+
+To decode a JSON value into a concrete type:
+
+```swift
+struct Payload: Decodable { let a: [Int] }
+
+let payload: Payload = try CastJson(j)
+```
+
+## Framing helpers
+
+All framing helpers operate on `Data` buffers and return:
+
+- `advance`: how many **bytes** to remove from the front of your buffer
+- `token`: the framed token, if available
+- `error`: an error if framing failed
+
+### scanJSON
+
+Rules (mirrors Go `ScanJSON`):
 
 - Everything before the first `{` or `[` is ignored (consumed).
 - Nesting is tracked until the matching `}` or `]`.
@@ -142,8 +184,6 @@ Rules:
 Example:
 
 ```swift
-import Foundation
-
 var buffer = Data(" \n{\"a\":[1,2,{\"b\":\"x\"}]}{\"c\":3}".utf8)
 
 while true {
@@ -151,7 +191,6 @@ while true {
     if let err = res.error { throw err }
     guard let token = res.token else { break }
 
-    // token is a Data containing one full JSON value
     let jsonText = String(decoding: token, as: UTF8.self)
     print("json token:", jsonText)
 
@@ -159,41 +198,65 @@ while true {
 }
 ```
 
-## Encoding dictionary
+### scanCSV
 
-`EncodingID` mirrors the Go `EncodingID` enum and the JS `EncodingID` object.
-Each case has the same numeric value:
-
-```swift
-let id = EncodingID.utf8
-print(id.rawValue)            // 0
-print(id.canonicalName)       // "UTF-8"
-```
-
-You can also look up an encoding by name:
+`scanCSV` frames CSV records and correctly ignores newlines inside quoted fields.
 
 ```swift
-do {
-    let utf8 = try EncodingID.parse("utf-8")
-    let windows1252 = try EncodingID.parse("Windows-1252")
+var buffer = Data("a,b\r\n\"x\ny\",z\n".utf8)
 
-    print(utf8.canonicalName)       // "UTF-8"
-    print(windows1252.rawValue)     // 24
-} catch {
-    print(error)    // Unknown encoding: ...
+while true {
+    let res = scanCSV(buffer, atEOF: true)
+    if let err = res.error { throw err }
+    guard let token = res.token else { break }
+
+    let record = String(decoding: token, as: UTF8.self)
+    print("csv record:", record)
+
+    buffer.removeFirst(res.advance)
 }
 ```
 
-`EncodingID.parse(_:)` is a thin Swift equivalent of Go’s `ParseEncoding` and
-the JS `parseEncoding(name)` helper.
+### scanXML
+
+`scanXML` frames one complete top-level XML element, ignoring leading prolog/PI/comments/doctypes.
+
+```swift
+var buffer = Data("<?xml version=\"1.0\"?><a><b/></a><c/>".utf8)
+
+while true {
+    let res = scanXML(buffer, atEOF: true)
+    if let err = res.error { throw err }
+    guard let token = res.token else { break }
+
+    let xml = String(decoding: token, as: UTF8.self)
+    print("xml element:", xml)
+
+    buffer.removeFirst(res.advance)
+}
+```
+
+## Encoding dictionary
+
+`EncodingID` mirrors the Go `EncodingID` enum and uses the same numeric values:
+
+```swift
+let id = EncodingID.utf8
+print(id.rawValue)      // 0
+print(id.encodingName)  // "UTF-8"
+```
+
+Lookup by name:
+
+```swift
+let windows1252 = try EncodingID.parse("Windows-1252")
+print(windows1252.rawValue) // 24
+```
 
 ## Notes on indexing
 
-- `Parcel.rawTexts()` and `Parcel.render()` assume all positions and lengths
-  (`pos`, `len`) are expressed in units of **Unicode scalars**.
-- If you compute fragment positions in Swift, prefer iterating over
-  `text.unicodeScalars` rather than `text.utf16` or `text.indices` to stay
-  consistent with the Go side.
+- `Parcel.rawTexts()` and `Parcel.render()` assume all positions and lengths (`pos`, `len`) are expressed in units of **Unicode scalars**.
+- If you compute fragment positions in Swift, prefer iterating over `text.unicodeScalars` to stay consistent with the Go side.
 
 ## License
 
