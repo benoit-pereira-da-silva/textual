@@ -150,7 +150,7 @@ IsTerminal returns true if this event represents a terminal state
 for the stream (completed, failed, or error).
 */
 func (s StreamEvent) IsTerminal() bool {
-	switch StreamEventType(s.Type) {
+	switch s.Type {
 	case StreamEventResponseCompleted,
 		StreamEventResponseFailed,
 		StreamEventError:
@@ -164,5 +164,5 @@ func (s StreamEvent) IsTerminal() bool {
 IsTextDelta returns true if the event carries incremental text output.
 */
 func (s StreamEvent) IsTextDelta() bool {
-	return StreamEventType(s.Type) == StreamEventOutputTextDelta
+	return s.Type == StreamEventOutputTextDelta
 }

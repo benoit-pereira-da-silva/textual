@@ -6,7 +6,7 @@
 //   - Parcel.UTF8String() (exposed here as render()/utf8String())
 // and exposes an EncodingID map plus helpers similar to encoding.go.
 //
-// It also provides a minimal UTF8String carrier mirroring Go's textual.StringCarrier,
+// It also provides a minimal StringCarrier helper mirroring Go's textual.StringCarrier,
 // useful when you only need plain UTF-8 text + index + error in client code.
 //
 // In addition, it provides a minimal JsonCarrier mirroring Go's textual.JsonCarrier
@@ -18,17 +18,17 @@
 //
 // Usage (ES modules):
 //   import {
-//     Parcel, UTF8String, JsonCarrier,
-//     input, utf8String, jsonFrom,
+//     Parcel, StringCarrier, JsonCarrier,
+//     parcelFrom, stringFrom, jsonFrom,
 //     scanJSON, scanJSONBytes,
 //     EncodingID, parseEncoding, encodingName
 //   } from './textual.js';
 //
-//   const p = input('Hello, café');
+//   const p = parcelFrom('Hello, café');
 //   const rawParts = p.rawTexts();
 //   const rendered = p.render();
 //
-//   const s = utf8String('plain text');
+//   const s = stringFrom('plain text');
 //   console.log(s.utf8String());
 //
 //   const j = jsonFrom('{"a":1}');
@@ -407,7 +407,7 @@ export class RawText {
 }
 
 /**
- * UTF8String is the minimal "carrier" helper, mirroring Go's textual.StringCarrier.
+ * StringCarrier is the minimal "carrier" helper, mirroring Go's textual.StringCarrier.
  *
  * Use it when you only need:
  *   - a UTF-8 string (value)
@@ -417,7 +417,7 @@ export class RawText {
  * This helper is intentionally small and does NOT implement Parcel-like
  * fragment logic.
  */
-export class UTF8String {
+export class StringCarrier {
     /**
      * @param {Object} opts
      * @param {UTF8Text} [opts.value] - UTF-8 text.
@@ -434,20 +434,20 @@ export class UTF8String {
     }
 
     /**
-     * Builds a UTF8String from JSON.
+     * Builds a StringCarrier from JSON.
      *
      * Accepts both lower-case and Go-style exported keys:
      *   - value / Value
      *   - index / Index
      *   - error / Error
      *
-     * @param {Object|UTF8String} json
-     * @returns {UTF8String}
+     * @param {Object|StringCarrier} json
+     * @returns {StringCarrier}
      */
     static fromJSON(json) {
-        if (json instanceof UTF8String) return json;
-        if (!json || typeof json !== "object") return new UTF8String();
-        return new UTF8String({
+        if (json instanceof StringCarrier) return json;
+        if (!json || typeof json !== "object") return new StringCarrier();
+        return new StringCarrier({
             value: json.value ?? json.Value ?? "",
             index: json.index ?? json.Index ?? 0,
             error: json.error ?? json.Error ?? null,
@@ -473,23 +473,23 @@ export class UTF8String {
     }
 
     /**
-     * Creates a new UTF8String from a UTF-8 token (Go: FromUTF8String()).
+     * Creates a new StringCarrier from a UTF-8 token (Go: FromUTF8String()).
      *
      * @param {UTF8Text} text
-     * @returns {UTF8String}
+     * @returns {StringCarrier}
      */
     fromUTF8String(text) {
-        return new UTF8String({ value: String(text), index: 0, error: null });
+        return new StringCarrier({ value: String(text), index: 0, error: null });
     }
 
     /**
      * Returns a copy of the value with its index set (Go: WithIndex()).
      *
      * @param {number} index
-     * @returns {UTF8String}
+     * @returns {StringCarrier}
      */
     withIndex(index) {
-        return new UTF8String({
+        return new StringCarrier({
             value: this.value,
             index: Number.isFinite(index) ? Math.trunc(index) : 0,
             error: this.error,
@@ -509,11 +509,11 @@ export class UTF8String {
      * Returns a copy of the value with its error merged (Go: WithError()).
      *
      * @param {*} err
-     * @returns {UTF8String}
+     * @returns {StringCarrier}
      */
     withError(err) {
         const merged = joinErrorStrings(this.error, err);
-        return new UTF8String({ value: this.value, index: this.index, error: merged });
+        return new StringCarrier({ value: this.value, index: this.index, error: merged });
     }
 
     /**
@@ -526,7 +526,7 @@ export class UTF8String {
     }
 
     /**
-     * Aggregates multiple UTF8String values into one.
+     * Aggregates multiple StringCarrier values into one.
      *
      * Behaviour mirrors Go's textual.StringCarrier.Aggregate:
      *   - Items are copied and stably sorted by index.
@@ -534,11 +534,11 @@ export class UTF8String {
      *   - The output index is reset to 0.
      *   - Errors are merged into a single portable string.
      *
-     * @param {UTF8String[]} items
-     * @returns {UTF8String}
+     * @param {Array<StringCarrier|Object>} items
+     * @returns {StringCarrier}
      */
     aggregate(items) {
-        const list = (items || []).map((it) => UTF8String.fromJSON(it));
+        const list = (items || []).map((it) => StringCarrier.fromJSON(it));
 
         list.sort((a, b) => {
             if (a.index !== b.index) return a.index - b.index;
@@ -551,21 +551,32 @@ export class UTF8String {
             out += it.value;
             err = joinErrorStrings(err, it.error);
         }
-        return new UTF8String({ value: out, index: 0, error: err });
+        return new StringCarrier({ value: out, index: 0, error: err });
     }
 }
 
 /**
+ * UTF8String is kept as a backward-compatible alias for StringCarrier.
+ *
+ * In Go, UTF8String is an alias for the built-in string type. In this JS helper,
+ * the struct-like carrier is named StringCarrier to match the Go package.
+ *
+ * @deprecated Use StringCarrier instead.
+ */
+export const UTF8String = StringCarrier;
+
+/**
  * JsonCarrier is the minimal "carrier" helper, mirroring Go's textual.JsonCarrier.
  *
- * Use it when you only need to stream raw JSON values (objects or arrays)
- * as UTF-8 strings, with:
+ * Use it when you need to stream JSON values (objects, arrays, strings, numbers,
+ * booleans, null) as UTF-8 text, with:
  *   - an optional ordering hint (index)
  *   - an optional, portable error string (error)
  *
  * Notes:
- *   - `value` is a string containing a single JSON value.
- *   - No JSON parsing or validation is performed.
+ *   - `value` is stored as a string containing exactly one JSON value.
+ *   - No JSON parsing or validation is performed unless you call toJSON() or
+ *     parseValue().
  *   - `aggregate(...)` produces a JSON array string by concatenating the
  *     contained JSON values with commas: `[v0,v1,...]`.
  */
@@ -588,10 +599,13 @@ export class JsonCarrier {
     /**
      * Builds a JsonCarrier from JSON.
      *
-     * Accepts both lower-case and Go-style exported keys:
-     *   - value / Value
-     *   - index / Index
-     *   - error / Error
+     * This method is designed to accept the JSON shape produced by Go's
+     * `textual.JsonCarrier` when marshaled:
+     *   - value / Value is the JSON value itself (object/array/string/number/bool/null),
+     *     NOT an already-serialized JSON string.
+     *
+     * The returned JsonCarrier stores `value` as raw JSON text (a string). If you
+     * already have raw JSON text, prefer `jsonFrom(text)` or `fromUTF8String(text)`.
      *
      * @param {Object|JsonCarrier} json
      * @returns {JsonCarrier}
@@ -599,20 +613,47 @@ export class JsonCarrier {
     static fromJSON(json) {
         if (json instanceof JsonCarrier) return json;
         if (!json || typeof json !== "object") return new JsonCarrier();
+
+        const v = (Object.prototype.hasOwnProperty.call(json, "value") ? json.value : undefined)
+            ?? (Object.prototype.hasOwnProperty.call(json, "Value") ? json.Value : undefined);
+
+        let valueText = "";
+        if (typeof v === "undefined") {
+            valueText = "";
+        } else {
+            // For Go JsonCarrier, v is the parsed JSON value (including JS strings).
+            // Convert it back into its raw JSON text form.
+            try {
+                const s = JSON.stringify(v);
+                valueText = (typeof s === "string") ? s : "";
+            } catch (_) {
+                // If a non-JSON-serializable value sneaks in, degrade to string.
+                valueText = String(v);
+            }
+        }
+
         return new JsonCarrier({
-            value: json.value ?? json.Value ?? "",
+            value: valueText,
             index: json.index ?? json.Index ?? 0,
             error: json.error ?? json.Error ?? null,
         });
     }
 
     /**
-     * Serializes the value to a JSON-friendly object.
+     * Serializes the carrier to a JSON-friendly object.
      *
-     * @returns {{value: string, index: number, error: (string|null)}}
+     * When `value` contains valid JSON, this emits the parsed JSON value so that
+     * JSON.stringify(...) produces the same shape as Go's JsonCarrier marshaling
+     * (i.e. `value` is not double-quoted).
+     *
+     * If parsing fails, it falls back to emitting the raw string, which keeps the
+     * object serializable but does not match the Go JsonCarrier wire shape.
+     *
+     * @returns {{value: any, index: number, error: (string|null)}}
      */
     toJSON() {
-        return { value: this.value, index: this.index, error: this.error };
+        const parsed = this.parseValue();
+        return { value: parsed.ok ? parsed.value : this.value, index: this.index, error: this.error };
     }
 
     /**
@@ -622,6 +663,23 @@ export class JsonCarrier {
      */
     utf8String() {
         return this.value;
+    }
+
+    /**
+     * Parses the stored JSON text into a JavaScript value.
+     *
+     * This is the JS-side equivalent of Go's CastJson facility: it does not try
+     * to be "typed", it simply parses to JS values.
+     *
+     * @returns {{ok: true, value: any} | {ok: false, error: Error}}
+     */
+    parseValue() {
+        const s = String(this.value ?? "");
+        try {
+            return { ok: true, value: JSON.parse(s) };
+        } catch (e) {
+            return { ok: false, error: (e instanceof Error ? e : new Error(String(e))) };
+        }
     }
 
     /**
@@ -1079,6 +1137,27 @@ export class Parcel {
     }
 
     /**
+     * Aggregates multiple parcels into one, sorting by index (stable).
+     *
+     * This is designed for streaming use-cases where chunks may arrive out of order.
+     *
+     * @param {Array<Parcel|Object>} parcels
+     * @returns {Parcel}
+     */
+    aggregateByIndex(parcels) {
+        const decorated = (parcels || []).map((p, order) => ({ p: Parcel.fromJSON(p), order: Number.isFinite(order) ? order : 0 }));
+
+        decorated.sort((a, b) => {
+            const ia = Number.isFinite(a.p.index) ? a.p.index : -1;
+            const ib = Number.isFinite(b.p.index) ? b.p.index : -1;
+            if (ia !== ib) return ia - ib;
+            return a.order - b.order;
+        });
+
+        return this.aggregate(decorated.map((x) => x.p));
+    }
+
+    /**
      * Aggregates multiple parcels into a single parcel by concatenating their
      * `text` fields and offsetting fragment positions.
      *
@@ -1119,49 +1198,61 @@ export class Parcel {
 
         return new Parcel({ index: -1, text, fragments, error: err });
     }
-
-    /**
-     * Aggregates multiple parcels into a single parcel by sorting the inputs by their index.
-     *
-     * @param {Array<Parcel|Object>} parcels
-     * @returns {Parcel}
-     */
-    aggregateByIndex(parcels) {
-        const decorated = (parcels || []).map((p, order) => ({ p: Parcel.fromJSON(p), order: Number.isFinite(order) ? order : 0 }));
-
-        decorated.sort((a, b) => {
-            const ia = Number.isFinite(a.p.index) ? a.p.index : -1;
-            const ib = Number.isFinite(b.p.index) ? b.p.index : -1;
-            if (ia !== ib) return ia - ib;
-            return a.order - b.order;
-        });
-
-        return this.aggregate(decorated.map((x) => x.p));
-    }
 }
 
 /**
- * Convenience factory mirroring the "create from UTF-8 text" pattern.
+ * Convenience factory mirroring Go's "create from UTF-8 text" pattern for Parcel.
+ *
+ * (Go: ParcelFrom / FromUTF8String on a prototype)
  *
  * @param {UTF8Text} text
  * @returns {Parcel}
  */
-export function input(text) {
+export function parcelFrom(text) {
     return new Parcel({ index: -1, text: String(text), fragments: [], error: null });
 }
 
 /**
- * Convenience factory for the minimal UTF8String carrier helper.
+ * Backward-compatible alias (older docs used input()).
+ *
+ * Prefer `parcelFrom(...)`.
+ *
+ * @deprecated
+ */
+export function input(text) {
+    return parcelFrom(text);
+}
+
+/**
+ * Convenience factory for the minimal StringCarrier helper.
+ *
+ * (Go: StringFrom / FromUTF8String on a prototype)
  *
  * @param {UTF8Text} text
- * @returns {UTF8String}
+ * @returns {StringCarrier}
+ */
+export function stringFrom(text) {
+    return new StringCarrier({ value: String(text), index: 0, error: null });
+}
+
+/**
+ * Backward-compatible alias (older docs used utf8String()).
+ *
+ * Prefer `stringFrom(...)`.
+ *
+ * @deprecated
+ *
+ * @param {UTF8Text} text
+ * @returns {StringCarrier}
  */
 export function utf8String(text) {
-    return new UTF8String({ value: String(text), index: 0, error: null });
+    return stringFrom(text);
 }
 
 /**
  * Convenience factory for the minimal JsonCarrier helper.
+ *
+ * (Go: JSONFrom / FromUTF8String on a prototype)
  *
  * @param {UTF8Text} text
  * @returns {JsonCarrier}
