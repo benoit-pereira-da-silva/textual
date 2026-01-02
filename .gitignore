@@ -21,7 +21,7 @@ profile.cov
 # vendor/
 
 # Go workspace file
-examples/gptextual/go.work
+../textualai/examples/chatgpt/go.work
 go.work.sum
 
 # env file
