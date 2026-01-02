@@ -24,7 +24,7 @@ import (
 	"strings"
 )
 
-func StringFrom(s UTF8String) StringCarrier {
+func StringCarrierFrom(s UTF8String) StringCarrier {
 	return (*new(StringCarrier)).FromUTF8String(s)
 }
 
