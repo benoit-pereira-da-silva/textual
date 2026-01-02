@@ -15,6 +15,7 @@
 package textual
 
 import (
+	"bufio"
 	"context"
 	"strings"
 	"testing"
@@ -36,6 +37,7 @@ func TestIOReaderProcessor_Start_ScanLinesAndIndexes(t *testing.T) {
 	})
 
 	p := NewIOReaderProcessor[StringCarrier](upper, reader)
+	p.SetSplitFunc(bufio.ScanLines)
 	p.SetContext(ctx)
 
 	outCh := p.Start()

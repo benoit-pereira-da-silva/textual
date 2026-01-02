@@ -13,6 +13,7 @@
 package textual
 
 import (
+	"bufio"
 	"context"
 	"strings"
 	"testing"
@@ -40,7 +41,7 @@ func TestIOReaderTranscoder_Start_ScanLinesAndIndexes(t *testing.T) {
 
 	ioT := NewIOReaderTranscoder[StringCarrier](tprefix, reader)
 	ioT.SetContext(ctx)
-
+	ioT.SetSplitFunc(bufio.ScanLines)
 	outCh := ioT.Start()
 	items, err := collectWithContext(ctx, outCh)
 	if err != nil {
