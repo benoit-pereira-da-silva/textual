@@ -38,7 +38,7 @@ func (s JsonGenericCarrier[T]) UTF8String() UTF8String {
 func (s JsonGenericCarrier[T]) FromUTF8String(str UTF8String) JsonGenericCarrier[T] {
 	// Note: no JsonCarrier validation is performed here; the carrier only transports bytes.
 	proto := *new(JsonGenericCarrier[T])
-	err := json.Unmarshal([]byte(str), &proto)
+	err := json.Unmarshal([]byte(str), &proto.Value)
 	if err != nil {
 		proto.Error = err
 	}
