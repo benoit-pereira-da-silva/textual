@@ -73,3 +73,37 @@ type TranscoderFunc[S1 Carrier[S1], S2 Carrier[S2]] func(ctx context.Context, in
 func (f TranscoderFunc[S1, S2]) Apply(ctx context.Context, in <-chan S1) <-chan S2 {
 	return f(ctx, in)
 }
+
+// Prepend composes one or more Processor[S1] stages *before* this transcoder.
+//
+// Given p1, p2 and transcoder f, the resulting transcoder behaves like:
+//
+//	out := f.Apply(ctx, p2.Apply(ctx, p1.Apply(ctx, in)))
+//
+// Nil processors are ignored (via NewChain).
+func (f TranscoderFunc[S1, S2]) Prepend(p ...Processor[S1]) Transcoder[S1, S2] {
+	if len(p) == 0 {
+		return f
+	}
+	chain := NewChain[S1](p...)
+	return TranscoderFunc[S1, S2](func(ctx context.Context, in <-chan S1) <-chan S2 {
+		return f(ctx, chain.Apply(ctx, in))
+	})
+}
+
+// Append composes one or more Processor[S2] stages *after* this transcoder.
+//
+// Given transcoder f and processors p1, p2, the resulting transcoder behaves like:
+//
+//	out := p2.Apply(ctx, p1.Apply(ctx, f.Apply(ctx, in)))
+//
+// Nil processors are ignored (via NewChain).
+func (f TranscoderFunc[S1, S2]) Append(p ...Processor[S2]) Transcoder[S1, S2] {
+	if len(p) == 0 {
+		return f
+	}
+	chain := NewChain[S2](p...)
+	return TranscoderFunc[S1, S2](func(ctx context.Context, in <-chan S1) <-chan S2 {
+		return chain.Apply(ctx, f(ctx, in))
+	})
+}
