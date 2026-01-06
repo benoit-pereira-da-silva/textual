@@ -15,6 +15,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"embed"
 	"flag"
@@ -109,6 +110,8 @@ func main() {
 		// Switch from line-based tokenization to expression tokenization:
 		// [optional leading whitespace][word/punctuation][optional trailing whitespace/newlines]
 		ioProc.SetSplitFunc(textual.ScanExpression)
+	} else {
+		ioProc.SetSplitFunc(bufio.ScanLines)
 	}
 
 	// Use a background context for this small example. In a real application
