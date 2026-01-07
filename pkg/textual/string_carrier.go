@@ -31,9 +31,9 @@ import (
 // StringCarrier implements Carrier[StringCarrier] and can be used with the generic stack
 // (Processor, Chain, Router, Transformation, ...).
 type StringCarrier struct {
-	Value string
-	Index int
-	Error error
+	Value UTF8String `json:"value"`
+	Index int        `json:"index,omitempty"`
+	Error error      `json:"error,omitempty"`
 }
 
 func (s StringCarrier) UTF8String() UTF8String {
