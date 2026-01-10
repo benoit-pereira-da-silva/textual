@@ -45,22 +45,3 @@ type Processor[S Carrier[S]] interface {
 	// when the context is canceled.
 	Apply(ctx context.Context, in <-chan S) <-chan S
 }
-
-// ProcessorFunc is a function adapter that implements Processor.
-//
-// It allows plain functions to be used as Processor values:
-//
-//	p := ProcessorFunc[carrier.StringCarrier](func(ctx context.Context, in <-chan carrier.StringCarrier) <-chan carrier.StringCarrier {
-//		return Async(ctx, in, func(ctx context.Context, s carrier.StringCarrier) carrier.StringCarrier {
-//			s.Value = strings.ToUpper(s.Value)
-//			return s
-//		})
-//	})
-//
-// This can make it easier to construct lightweight processors inline.
-type ProcessorFunc[S Carrier[S]] func(ctx context.Context, in <-chan S) <-chan S
-
-// Apply calls f(ctx, in).
-func (f ProcessorFunc[S]) Apply(ctx context.Context, in <-chan S) <-chan S {
-	return f(ctx, in)
-}

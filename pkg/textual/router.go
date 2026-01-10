@@ -21,32 +21,13 @@ import (
 	"time"
 )
 
-// RoutePredicate decides whether a given item should be handled by a route.
-//
-// The predicate has access to:
-//   - ctx: the processing context (for deadlines / external state).
-//   - item: the current value flowing through the pipeline.
-//
-// Examples:
-//
-//	// Route Parcel values that still have raw text.
-//	pred := func(ctx context.Context, res Parcel) bool {
-//		return len(res.RawTexts()) > 0
-//	}
-//
-//	// Route StringCarrier values matching a prefix.
-//	pred2 := func(ctx context.Context, s StringCarrier) bool {
-//		return strings.HasPrefix(s.Value, "WARN")
-//	}
-type RoutePredicate[S Carrier[S]] func(ctx context.Context, item S) bool
-
 // RoutingStrategy controls how the Router selects target routes among the ones
 // whose predicate matches.
 type RoutingStrategy int
 
 const (
 	// RoutingStrategyFirstMatch sends each item to the first route whose
-	// predicate returns true. If multiple routes match, only the first one
+	// predicate returns true. ConditionalProc multiple routes match, only the first one
 	// (in registration order) is used.
 	RoutingStrategyFirstMatch RoutingStrategy = iota
 
@@ -67,7 +48,7 @@ const (
 // selection predicate.
 type route[S Carrier[S]] struct {
 	processor Processor[S]
-	predicate RoutePredicate[S] // nil means "always eligible"
+	predicate Predicate[S] // nil means "always eligible"
 }
 
 // Router is a Processor that routes incoming items to one or more downstream
@@ -82,7 +63,7 @@ type route[S Carrier[S]] struct {
 //
 // Routing semantics:
 //
-//   - If no route is configured, Router behaves as a pass-through Processor.
+//   - ConditionalProc no route is configured, Router behaves as a pass-through Processor.
 //   - For each incoming item:
 //     1) the set of eligible routes is computed (predicate true or nil),
 //     2) the strategy decides which subset of eligible routes receives the item,
@@ -121,9 +102,9 @@ func NewRouter[S Carrier[S]](strategy RoutingStrategy, processors ...Processor[S
 
 // AddRoute registers a new route with an optional predicate.
 //
-//   - If predicate is nil, the route is always considered eligible.
-//   - If processor is nil, the route is ignored.
-func (r *Router[S]) AddRoute(predicate RoutePredicate[S], processor Processor[S]) {
+//   - ConditionalProc predicate is nil, the route is always considered eligible.
+//   - ConditionalProc processor is nil, the route is ignored.
+func (r *Router[S]) AddRoute(predicate Predicate[S], processor Processor[S]) {
 	if processor == nil {
 		return
 	}
@@ -148,7 +129,7 @@ func (r *Router[S]) SetStrategy(strategy RoutingStrategy) {
 //
 // Context handling:
 //
-//   - If ctx is nil, context.Background() is used.
+//   - ConditionalProc ctx is nil, context.Background() is used.
 //   - The same ctx is passed to every underlying Processor.
 //   - When ctx is canceled, the router stops reading from `in`, closes all
 //     route inputs, drains all child outputs, then closes the returned channel.

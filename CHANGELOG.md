@@ -1,4 +1,6 @@
 # Unreleased
++ Introduced `Try, Catch, Finally` for procedural error handling.
++ Introduced `If,Then, Else, ElseIf` for procedural process branching.
 + Glue helpers function to compose a Transcoder and a Processor.
 + Introduced `textual.Transcoder` to transcode one Type to another. 
   + `textual.IOReaderTranscoder` connects an io.Reader to a Transcoder by scanning.
