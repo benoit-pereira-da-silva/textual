@@ -70,6 +70,19 @@ type Transcoder[S1 Carrier[S1], S2 Carrier[S2]] interface {
 // This can make it easier to construct lightweight transcoders inline.
 type TranscoderFunc[S1 Carrier[S1], S2 Carrier[S2]] func(ctx context.Context, in <-chan S1) <-chan S2
 
+// NewTranscoderFunc adapts an item-level function f(ctx, item) -> item into a TranscoderFunc.
+//
+// The returned TranscoderFunc uses Async to apply f to each item in the input stream.
+//
+// It applies f(ctx, item) to every input item (1:1) using Async.
+func NewTranscoderFunc[S1 Carrier[S1], S2 Carrier[S2]](f func(ctx context.Context, c S1) S2) TranscoderFunc[S1, S2] {
+	return TranscoderFunc[S1, S2](func(ctx context.Context, in <-chan S1) <-chan S2 {
+		return Async(ctx, in, func(ctx context.Context, s S1) S2 {
+			return f(ctx, s)
+		})
+	})
+}
+
 // Apply calls f(ctx, in).
 //
 // For safety, Apply enforces the Transcoder contract that the returned channel is

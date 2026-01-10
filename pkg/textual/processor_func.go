@@ -19,6 +19,19 @@ import (
 // This can make it easier to construct lightweight processors inline.
 type ProcessorFunc[S Carrier[S]] func(ctx context.Context, in <-chan S) <-chan S
 
+// NewProcessorFunc adapts an item-level function f(ctx, item) -> item into a ProcessorFunc.
+//
+// The returned ProcessorFunc uses Async to apply f to each item in the input stream.
+//
+// It applies f(ctx, item) to every input item (1:1) using Async.
+func NewProcessorFunc[S Carrier[S]](f func(ctx context.Context, c S) S) ProcessorFunc[S] {
+	return ProcessorFunc[S](func(ctx context.Context, in <-chan S) <-chan S {
+		return Async(ctx, in, func(ctx context.Context, s S) S {
+			return f(ctx, s)
+		})
+	})
+}
+
 // Apply calls f(ctx, in).
 //
 // For safety, Apply enforces the Processor contract that the returned channel is
