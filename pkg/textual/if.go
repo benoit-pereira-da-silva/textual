@@ -173,28 +173,8 @@ func (c *ConditionalProc[S]) Apply(ctx context.Context, in <-chan S) <-chan S {
 // while still consuming the matching branch (i.e. it stops the ELSEIf chain).
 func passThroughProcessor[S Carrier[S]]() ProcessorFunc[S] {
 	return ProcessorFunc[S](func(ctx context.Context, in <-chan S) <-chan S {
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		out := make(chan S)
-		go func() {
-			defer close(out)
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case item, ok := <-in:
-					if !ok {
-						return
-					}
-					select {
-					case <-ctx.Done():
-						return
-					case out <- item:
-					}
-				}
-			}
-		}()
-		return out
+		return Async(ctx, in, func(_ context.Context, s S) S {
+			return s
+		})
 	})
 }

@@ -143,12 +143,34 @@ type panicStoreKey struct{}
 //
 // WithPanicStore never returns a nil context. If parent is nil, it falls back to
 // context.Background().
+//
+// Note: WithPanicStore always creates a new store (it does not reuse a store that
+// may already be present on parent). If you want to reuse an existing store when
+// present, use EnsurePanicStore.
 func WithPanicStore(parent context.Context) (context.Context, *PanicStore) {
 	if parent == nil {
 		parent = context.Background()
 	}
 	ps := &PanicStore{}
 	return context.WithValue(parent, panicStoreKey{}, ps), ps
+}
+
+// EnsurePanicStore returns a context that carries a PanicStore, plus the store.
+//
+// If parent already has a PanicStore attached (via WithPanicStore), it is reused
+// and parent is returned unchanged.
+//
+// This is the safe, idempotent variant intended for infrastructure code that
+// wants to guarantee that recovered panics can always be recorded, without
+// accidentally shadowing a PanicStore the caller is supervising.
+func EnsurePanicStore(parent context.Context) (context.Context, *PanicStore) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	if ps := PanicStoreFromContext(parent); ps != nil {
+		return parent, ps
+	}
+	return WithPanicStore(parent)
 }
 
 // PanicStoreFromContext retrieves the PanicStore from a context, if present.

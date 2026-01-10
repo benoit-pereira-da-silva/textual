@@ -16,6 +16,7 @@ package textual
 
 import (
 	"context"
+	"runtime/debug"
 )
 
 // Transcoder is a chainable processing stage that converts a stream of carriers
@@ -70,8 +71,31 @@ type Transcoder[S1 Carrier[S1], S2 Carrier[S2]] interface {
 type TranscoderFunc[S1 Carrier[S1], S2 Carrier[S2]] func(ctx context.Context, in <-chan S1) <-chan S2
 
 // Apply calls f(ctx, in).
-func (f TranscoderFunc[S1, S2]) Apply(ctx context.Context, in <-chan S1) <-chan S2 {
-	return f(ctx, in)
+//
+// For safety, Apply enforces the Transcoder contract that the returned channel is
+// never nil. If f panics (including the case where f is nil), the panic is
+// recovered, recorded into the PanicStore carried by ctx (ensured via
+// EnsurePanicStore), and a closed channel is returned.
+func (f TranscoderFunc[S1, S2]) Apply(ctx context.Context, in <-chan S1) (out <-chan S2) {
+	ctx, ps := EnsurePanicStore(ctx)
+
+	defer func() {
+		if r := recover(); r != nil {
+			if ps != nil {
+				ps.Store(r, debug.Stack())
+			}
+			out = closedChan[S2]()
+		}
+	}()
+
+	out = f(ctx, in)
+	if out == nil {
+		if ps != nil {
+			ps.Store("textual: TranscoderFunc returned a nil channel", debug.Stack())
+		}
+		out = closedChan[S2]()
+	}
+	return out
 }
 
 // Prepend composes one or more Processor[S1] stages *before* this transcoder.
@@ -87,7 +111,7 @@ func (f TranscoderFunc[S1, S2]) Prepend(p ...Processor[S1]) Transcoder[S1, S2] {
 	}
 	chain := NewChain[S1](p...)
 	return TranscoderFunc[S1, S2](func(ctx context.Context, in <-chan S1) <-chan S2 {
-		return f(ctx, chain.Apply(ctx, in))
+		return f.Apply(ctx, chain.Apply(ctx, in))
 	})
 }
 
@@ -104,6 +128,6 @@ func (f TranscoderFunc[S1, S2]) Append(p ...Processor[S2]) Transcoder[S1, S2] {
 	}
 	chain := NewChain[S2](p...)
 	return TranscoderFunc[S1, S2](func(ctx context.Context, in <-chan S1) <-chan S2 {
-		return chain.Apply(ctx, f(ctx, in))
+		return chain.Apply(ctx, f.Apply(ctx, in))
 	})
 }

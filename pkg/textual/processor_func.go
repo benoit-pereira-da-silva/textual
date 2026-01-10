@@ -1,6 +1,9 @@
 package textual
 
-import "context"
+import (
+	"context"
+	"runtime/debug"
+)
 
 // ProcessorFunc is a function adapter that implements Processor.
 //
@@ -17,8 +20,31 @@ import "context"
 type ProcessorFunc[S Carrier[S]] func(ctx context.Context, in <-chan S) <-chan S
 
 // Apply calls f(ctx, in).
-func (f ProcessorFunc[S]) Apply(ctx context.Context, in <-chan S) <-chan S {
-	return f(ctx, in)
+//
+// For safety, Apply enforces the Processor contract that the returned channel is
+// never nil. If f panics (including the case where f is nil), the panic is
+// recovered, recorded into the PanicStore carried by ctx (ensured via
+// EnsurePanicStore), and a closed channel is returned.
+func (f ProcessorFunc[S]) Apply(ctx context.Context, in <-chan S) (out <-chan S) {
+	ctx, ps := EnsurePanicStore(ctx)
+
+	defer func() {
+		if r := recover(); r != nil {
+			if ps != nil {
+				ps.Store(r, debug.Stack())
+			}
+			out = closedChan[S]()
+		}
+	}()
+
+	out = f(ctx, in)
+	if out == nil {
+		if ps != nil {
+			ps.Store("textual: ProcessorFunc returned a nil channel", debug.Stack())
+		}
+		out = closedChan[S]()
+	}
+	return out
 }
 
 // Chain composes one or more processors after this processor.

@@ -17,6 +17,7 @@ package textual
 import (
 	"context"
 	"math/rand"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -134,35 +135,30 @@ func (r *Router[S]) SetStrategy(strategy RoutingStrategy) {
 //   - When ctx is canceled, the router stops reading from `in`, closes all
 //     route inputs, drains all child outputs, then closes the returned channel.
 func (r *Router[S]) Apply(ctx context.Context, in <-chan S) <-chan S {
-	if ctx == nil {
-		ctx = context.Background()
+	ctx, ps := EnsurePanicStore(ctx)
+
+	// Nil receiver: behave as pass-through.
+	if r == nil {
+		return passThroughProcessor[S]().Apply(ctx, in)
+	}
+
+	// Defensive: a nil input channel would block forever unless ctx is canceled.
+	// Treat it as an empty stream and surface the fault via PanicStore.
+	if in == nil {
+		if ps != nil {
+			ps.Store("textual: Router.Apply received a nil input channel", debug.Stack())
+		}
+		return closedChan[S]()
 	}
 
 	// No routes: transparent pass-through Processor.
 	if len(r.routes) == 0 {
-		out := make(chan S)
-		go func() {
-			defer close(out)
-			for {
-				select {
-				case <-ctx.Done():
-					// Stop emitting new values on cancellation.
-					return
-				case item, ok := <-in:
-					if !ok {
-						return
-					}
-					select {
-					case <-ctx.Done():
-						// Context canceled while sending.
-						return
-					case out <- item:
-					}
-				}
-			}
-		}()
-		return out
+		return passThroughProcessor[S]().Apply(ctx, in)
 	}
+
+	// Derive a cancellable child context so the router can stop its internal
+	// goroutines on fatal faults without canceling the parent.
+	ctx, cancel := context.WithCancel(ctx)
 
 	// Create one input channel per route and start each underlying Processor.
 	childIns := make([]chan S, len(r.routes))
@@ -171,7 +167,15 @@ func (r *Router[S]) Apply(ctx context.Context, in <-chan S) <-chan S {
 	for i, rt := range r.routes {
 		ch := make(chan S)
 		childIns[i] = ch
-		childOuts[i] = rt.processor.Apply(ctx, ch)
+
+		outCh, ok := safeApplyProcessor(ctx, ps, rt.processor, ch)
+		childOuts[i] = outCh
+
+		// A child stage that panicked (or returned a nil channel) is a fatal
+		// programming fault. Cancel the router context to abort promptly.
+		if !ok {
+			cancel()
+		}
 	}
 
 	out := make(chan S)
@@ -183,6 +187,20 @@ func (r *Router[S]) Apply(ctx context.Context, in <-chan S) <-chan S {
 	for i := range childOuts {
 		go func(ch <-chan S) {
 			defer wg.Done()
+
+			defer func() {
+				if rcv := recover(); rcv != nil {
+					if ps != nil {
+						ps.Store(rcv, debug.Stack())
+					}
+					// Abort router on infrastructure panic.
+					cancel()
+					// Best-effort drain to avoid blocking child sends.
+					for range ch {
+					}
+				}
+			}()
+
 			for {
 				select {
 				case <-ctx.Done():
@@ -216,12 +234,24 @@ func (r *Router[S]) Apply(ctx context.Context, in <-chan S) <-chan S {
 		defer func() {
 			// Signal downstream processors that no more input will arrive.
 			for _, ch := range childIns {
-				close(ch)
+				safeCloseChan(ps, ch)
 			}
 			// Wait until all fan-in goroutines have completed, then close
 			// the merged output channel.
 			wg.Wait()
 			close(out)
+			// Release resources associated with the derived context.
+			cancel()
+		}()
+
+		defer func() {
+			if rcv := recover(); rcv != nil {
+				if ps != nil {
+					ps.Store(rcv, debug.Stack())
+				}
+				// Stop routing on panic (predicate panic, send-on-closed, etc.).
+				cancel()
+			}
 		}()
 
 		for {

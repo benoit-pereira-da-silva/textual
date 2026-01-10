@@ -16,6 +16,7 @@ package textual
 
 import (
 	"context"
+	"runtime/debug"
 )
 
 type Processors[S Carrier[S]] []Processor[S]
@@ -39,12 +40,31 @@ func (p Processors[C]) ProcessorFunc() ProcessorFunc[C] {
 }
 
 func (p Processors[C]) Apply(ctx context.Context, in <-chan C) <-chan C {
+	ctx, ps := EnsurePanicStore(ctx)
+
 	out := in
 	for _, proc := range p {
 		if proc == nil {
 			continue
 		}
-		out = proc.Apply(ctx, out)
+
+		var ok bool
+		out, ok = safeApplyProcessor(ctx, ps, proc, out)
+		if !ok {
+			// A stage panicked or violated the channel contract (nil output).
+			// A closed channel has been substituted; stop composing further stages.
+			break
+		}
 	}
+
+	// Enforce the "returned channel must be non-nil" contract even for degenerate
+	// cases (e.g. no processors and nil input).
+	if out == nil {
+		if ps != nil {
+			ps.Store("textual: Processors.Apply produced a nil channel", debug.Stack())
+		}
+		out = closedChan[C]()
+	}
+
 	return out
 }
